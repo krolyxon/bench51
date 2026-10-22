@@ -1,5 +1,5 @@
 [package]
-name = "i8051"
+name = "bench51"
 version = "0.1.0"
 edition = "2024"
 description = "A TUI Intel 8051 assembler, simulator and debugger"

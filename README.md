@@ -1,4 +1,4 @@
-# i8051 — a TUI 8051 assembler, simulator & debugger
+# bench51 — a TUI 8051 assembler, simulator & debugger
 
 A small, Keil µVision-style IDE for the Intel 8051 that runs in your terminal.
 Write assembly in the built-in editor, assemble it, inspect the listing and
@@ -37,6 +37,8 @@ cycle-exact replacement for a vendor simulator.
 ## Usage
 
 ```bash
+cargo install --path .                               # installs the `bench51` binary
+
 cargo run --release -- examples/serial_hello.asm      # open in the TUI
 cargo run --release                                   # start with a template
 cargo run --release -- firmware.hex                   # disassemble & debug a HEX file
