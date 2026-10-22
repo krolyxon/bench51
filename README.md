@@ -8,6 +8,15 @@ registers, SFRs, memory, ports, timers, interrupts and the serial port.
 Built in Rust with [ratatui](https://ratatui.rs). It is a learning tool, not a
 cycle-exact replacement for a vendor simulator.
 
+## Why this exists
+
+I had microcontroller practicals to get through, and the course expects you to
+use Keil µVision. Keil µVision doesn't run on Linux. Rather than fight with
+Wine or a Windows VM every lab session, I wrote my own: bench51 does the parts
+of µVision those practicals actually need (write the code, assemble it, look
+at the listing and HEX, step through it and watch the registers) right in the
+terminal.
+
 -----
 
 ## Features
