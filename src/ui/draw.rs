@@ -90,7 +90,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         )
     };
     let mut spans = vec![
-        Span::styled(" i8051 ", Style::new().bg(ACCENT).fg(Color::Black).bold()),
+        Span::styled(" bench51 ", Style::new().bg(ACCENT).fg(Color::Black).bold()),
         Span::raw(" "),
         Span::styled(mode, mode_style),
         Span::styled(state, state_style),

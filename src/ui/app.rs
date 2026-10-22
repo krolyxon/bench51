@@ -264,7 +264,7 @@ impl App {
                 (p, false)
             }
             None => {
-                let p = std::env::temp_dir().join(format!("i8051-{}.asm", std::process::id()));
+                let p = std::env::temp_dir().join(format!("bench51-{}.asm", std::process::id()));
                 if let Err(e) = std::fs::write(&p, self.text() + "\n") {
                     self.status = format!("cannot write {}: {e}", p.display());
                     return;
