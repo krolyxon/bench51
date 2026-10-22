@@ -1,43 +1,95 @@
-mod assembler;
-mod cpu;
-mod instructions;
-mod memory;
+mod asm;
+mod isa;
+mod sfr;
+mod sim;
+mod ui;
 
-use std::io;
+use std::path::PathBuf;
+use std::process::ExitCode;
 
-use crate::assembler::assembler;
 use clap::Parser;
-use cpu::CPU;
-use memory::Memory;
 
+/// Intel 8051 assembler, simulator and TUI debugger.
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[command(version, about)]
 struct Args {
-    #[arg(short, long)]
-    filename: String,
+    /// Assembly source (.asm) or Intel HEX (.hex) file to open.
+    file: Option<PathBuf>,
+
+    /// Assemble FILE without starting the TUI, writing the Intel HEX file.
+    #[arg(short, long, requires = "file")]
+    assemble: bool,
+
+    /// Output HEX path (default: FILE with a .hex extension).
+    #[arg(short, long, requires = "assemble")]
+    output: Option<PathBuf>,
+
+    /// Also write a listing to this path (default: FILE with a .lst extension).
+    #[arg(long, requires = "assemble")]
+    lst: Option<PathBuf>,
+
+    /// Oscillator frequency in MHz, used to show elapsed time.
+    #[arg(long, default_value_t = 11.0592)]
+    clock: f64,
 }
 
-fn main() {
-    let args = Args::parse();
-
-    let mut cpu = CPU {
-        sp: 0xFFFE,
-        ..Default::default()
+fn assemble_file(args: &Args) -> ExitCode {
+    let path = args.file.as_ref().unwrap();
+    let source = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {e}", path.display());
+            return ExitCode::FAILURE;
+        }
     };
-    let mut mem = Memory::new();
-
-    let asm = std::fs::read_to_string(args.filename).unwrap();
-    let program = assembler(&asm);
-
-    for (i, byte) in program.iter().enumerate() {
-        mem.write(i as u16, *byte);
+    let out = asm::assemble(&source);
+    let lst = args
+        .lst
+        .clone()
+        .unwrap_or_else(|| path.with_extension("lst"));
+    if let Err(e) = std::fs::write(&lst, out.listing(&source)) {
+        eprintln!("error: cannot write {}: {e}", lst.display());
     }
+    if !out.ok() {
+        for d in &out.diagnostics {
+            eprintln!(
+                "{}:{}:{}: error: {}",
+                path.display(),
+                d.line + 1,
+                d.col + 1,
+                d.msg
+            );
+        }
+        eprintln!("{} error(s); see {}", out.diagnostics.len(), lst.display());
+        return ExitCode::FAILURE;
+    }
+    let hex = args
+        .output
+        .clone()
+        .unwrap_or_else(|| path.with_extension("hex"));
+    if let Err(e) = std::fs::write(&hex, out.intel_hex()) {
+        eprintln!("error: cannot write {}: {e}", hex.display());
+        return ExitCode::FAILURE;
+    }
+    println!(
+        "{} bytes -> {}, listing -> {}",
+        out.code_size(),
+        hex.display(),
+        lst.display()
+    );
+    ExitCode::SUCCESS
+}
 
-    while !cpu.halted {
-        cpu.debug_instr(&mem);
-        cpu.step(&mut mem);
-
-        let mut buf = String::new();
-        io::stdin().read_line(&mut buf).unwrap();
+fn main() -> ExitCode {
+    let args = Args::parse();
+    if args.assemble {
+        return assemble_file(&args);
+    }
+    match ui::run(args.file, args.clock) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
