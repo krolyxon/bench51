@@ -1,7 +1,10 @@
 [package]
-name = "cpu-emulator"
+name = "i8051"
 version = "0.1.0"
 edition = "2024"
+description = "A TUI Intel 8051 assembler, simulator and debugger"
 
 [dependencies]
 clap = { version = "4.5.54", features = ["derive"] }
+ratatui = "0.30"
+ratatui-textarea = "0.9"
