@@ -8,6 +8,27 @@ registers, SFRs, memory, ports, timers, interrupts and the serial port.
 Built in Rust with [ratatui](https://ratatui.rs). It is a learning tool, not a
 cycle-exact replacement for a vendor simulator.
 
+![Debugging serial_hello.asm: source, registers, peripherals, IRAM and the UART console](docs/screenshots/debug_serial.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/listing.png" alt="Editor with the assembled Keil-style listing"></td>
+    <td width="50%"><img src="docs/screenshots/debug_breakpoint.png" alt="Stopped at a breakpoint inside the timer 0 ISR, SFR view"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Editor + assembled listing</sub></td>
+    <td align="center"><sub>Breakpoint inside a timer ISR, SFR view</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/errors.png" alt="Assembler errors marked in the gutter and listed in the Errors tab"></td>
+    <td width="50%"><img src="docs/screenshots/hex.png" alt="Intel HEX output tab"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Assembler errors in the gutter and Errors tab</sub></td>
+    <td align="center"><sub>Intel HEX output</sub></td>
+  </tr>
+</table>
+
 ## Why this exists
 
 I had microcontroller practicals to get through, and the course expects you to
