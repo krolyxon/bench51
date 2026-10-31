@@ -5,9 +5,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap};
 use ratatui_textarea::TextArea;
 
-use super::app::{App, Focus, MemTab, Mode, OutTab, PromptKind, SPEEDS};
+use super::app::{App, Focus, MemTab, Mode, OutTab, PromptKind};
 use super::syntax::highlight;
-use crate::sfr::{self, IE, IP, PCON, PSW, SCON, TCON, TH0, TH1, TL0, TL1, TMOD};
+use bench51_core::session::{SPEEDS, vector_name};
+use bench51_core::sfr::{self, IE, IP, PCON, PSW, SCON, TCON, TH0, TH1, TL0, TL1, TMOD};
 
 const ACCENT: Color = Color::Cyan;
 const CHANGED: Style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
@@ -73,12 +74,12 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Style::new().bg(Color::Magenta).fg(Color::White).bold(),
         ),
     };
-    let (state, state_style) = if app.running {
+    let (state, state_style) = if app.session.running {
         (
             " RUNNING ",
             Style::new().bg(Color::Green).fg(Color::Black).bold(),
         )
-    } else if app.build.is_none() {
+    } else if app.session.build.is_none() {
         (
             " NOT BUILT ",
             Style::new().bg(Color::DarkGray).fg(Color::White),
@@ -96,14 +97,14 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(state, state_style),
         Span::raw(format!("  {}", app.title())),
     ];
-    if app.build.is_some() && app.stale() {
+    if app.session.build.is_some() && app.stale() {
         spans.push(Span::styled(
             "  (source changed — F7 to rebuild)",
             Style::new().fg(Color::Yellow),
         ));
     }
     spans.push(Span::styled(
-        format!("   speed {}/frame (+/-)", SPEEDS[app.speed]),
+        format!("   speed {}/frame (+/-)", SPEEDS[app.session.speed]),
         DIM,
     ));
     f.render_widget(Line::from(spans), area);
@@ -137,7 +138,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
     };
     let width = area.width as usize;
-    let status = format!(" {}", app.status);
+    let status = format!(" {}", app.session.status);
     let pad = width.saturating_sub(status.chars().count() + keys.len() + 1);
     let line = Line::from(vec![
         Span::styled(status, Style::new().fg(Color::White)),
@@ -163,16 +164,16 @@ fn draw_edit(f: &mut Frame, app: &mut App, area: Rect) {
     // Breakpoint / error markers aligned with the editor's scroll position.
     let top = app.editor.scroll_offset().0 as usize;
     let errors: Vec<usize> = app
-        .last_asm
-        .as_ref()
-        .filter(|(src, _)| *src == app.text())
-        .map(|(_, o)| o.diagnostics.iter().map(|d| d.line).collect())
-        .unwrap_or_default();
+        .session
+        .diagnostics_for(&app.text())
+        .iter()
+        .map(|d| d.line)
+        .collect();
     let marks: Vec<Line> = (top..top + gutter.height as usize)
         .map(|l| {
             if errors.contains(&l) {
                 Line::styled("✗", Style::new().fg(Color::Red).bold())
-            } else if app.breakpoints.contains(&l) {
+            } else if app.session.breakpoints.contains(&l) {
                 Line::styled("●", Style::new().fg(Color::Red))
             } else {
                 Line::raw("")
@@ -186,6 +187,7 @@ fn draw_edit(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     let n_err = app
+        .session
         .last_asm
         .as_ref()
         .map_or(0, |(_, o)| o.diagnostics.len());
@@ -214,7 +216,7 @@ fn draw_output(f: &mut Frame, app: &mut App, area: Rect) {
     .highlight_style(Style::new().fg(ACCENT).bold().underlined());
     f.render_widget(tabs, tabs_area);
 
-    let lines: Vec<Line> = match (app.out_tab, &app.last_asm) {
+    let lines: Vec<Line> = match (app.out_tab, &app.session.last_asm) {
         (_, None) => vec![Line::styled("Press F7 to assemble.", DIM)],
         (OutTab::Listing, Some((src, out))) => out
             .listing(src)
@@ -312,7 +314,7 @@ fn draw_source(f: &mut Frame, app: &mut App, area: Rect) {
     let block = panel("Source", focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let Some(build) = &app.build else {
+    let Some(build) = &app.session.build else {
         f.render_widget(
             Paragraph::new("Nothing assembled yet — press F7.").style(DIM),
             inner,
@@ -326,7 +328,7 @@ fn draw_source(f: &mut Frame, app: &mut App, area: Rect) {
     } else if app.src_cursor >= app.src_scroll + h {
         app.src_scroll = app.src_cursor + 1 - h;
     }
-    let pc_line = build.addr_to_line.get(&app.sim.pc).copied();
+    let pc_line = build.addr_to_line.get(&app.session.sim.pc).copied();
     let lines: Vec<Line> = build
         .source
         .iter()
@@ -343,7 +345,7 @@ fn draw_source(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 Style::new()
             };
-            let bp = if app.breakpoints.contains(&i) {
+            let bp = if app.session.breakpoints.contains(&i) {
                 Span::styled("●", bg.fg(Color::Red))
             } else {
                 Span::styled(" ", bg)
@@ -394,27 +396,20 @@ fn flags(byte: u8, names: [&'static str; 8]) -> Vec<Span<'static>> {
 }
 
 fn draw_registers(f: &mut Frame, app: &App, area: Rect) {
-    let s = &app.sim;
+    let s = &app.session.sim;
     let block = panel("Registers", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let ch = |addr: u8| s.sfr(addr) != app.prev_sfr[(addr & 0x7F) as usize];
+    let ch = |addr: u8| s.sfr(addr) != app.session.prev_sfr[(addr & 0x7F) as usize];
     let reg = |n: u8| {
         let a = s.reg_addr(n) as usize;
         vec![
             Span::styled(format!("R{n} "), LABEL),
-            hex2(s.iram[a], s.iram[a] != app.prev_iram[a]),
+            hex2(s.iram[a], s.iram[a] != app.session.prev_iram[a]),
             Span::raw("  "),
         ]
     };
-    let micros = s.cycles as f64 * 12.0 / app.clock_mhz;
-    let time = if micros >= 1_000_000.0 {
-        format!("{:.3} s", micros / 1e6)
-    } else if micros >= 1000.0 {
-        format!("{:.3} ms", micros / 1e3)
-    } else {
-        format!("{micros:.2} µs")
-    };
+    let time = app.session.elapsed();
     let lines = vec![
         Line::from(vec![
             Span::styled("PC ", LABEL),
@@ -461,18 +456,18 @@ fn draw_registers(f: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![
             Span::styled("Time ", LABEL),
             Span::raw(time),
-            Span::styled(format!(" @{}MHz", app.clock_mhz), DIM),
+            Span::styled(format!(" @{}MHz", app.session.clock_mhz), DIM),
         ]),
     ];
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_peripherals(f: &mut Frame, app: &App, area: Rect) {
-    let s = &app.sim;
+    let s = &app.session.sim;
     let block = panel("Peripherals", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let ch = |addr: u8| s.sfr(addr) != app.prev_sfr[(addr & 0x7F) as usize];
+    let ch = |addr: u8| s.sfr(addr) != app.session.prev_sfr[(addr & 0x7F) as usize];
     let sfr_val = |name: &'static str, addr: u8| {
         vec![
             Span::styled(name, LABEL),
@@ -609,17 +604,6 @@ fn draw_peripherals(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn vector_name(v: u16) -> &'static str {
-    match v {
-        0x03 => "INT0",
-        0x0B => "T0",
-        0x13 => "INT1",
-        0x1B => "T1",
-        0x23 => "UART",
-        _ => "?",
-    }
-}
-
 fn draw_memory(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Memory;
     let block = panel("Memory", focused);
@@ -646,7 +630,7 @@ fn draw_memory(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let s = &app.sim;
+    let s = &app.session.sim;
     let per_row: usize = if content.width >= 74 { 16 } else { 8 };
     let total = match app.mem_tab {
         MemTab::Iram => 256,
@@ -655,9 +639,9 @@ fn draw_memory(f: &mut Frame, app: &mut App, area: Rect) {
     let rows = total / per_row;
     let h = content.height as usize;
     app.mem_scroll = app.mem_scroll.min(rows.saturating_sub(h));
-    let bps = app.bp_addrs();
+    let bps = app.session.bp_addrs();
     let pc = s.pc as usize;
-    let pc_len = crate::isa::info(s.code[pc]).map_or(1, |i| i.size as usize);
+    let pc_len = bench51_core::isa::info(s.code[pc]).map_or(1, |i| i.size as usize);
     let bank = s.reg_addr(0) as usize;
 
     let lines: Vec<Line> = (app.mem_scroll..rows.min(app.mem_scroll + h))
@@ -679,7 +663,7 @@ fn draw_memory(f: &mut Frame, app: &mut App, area: Rect) {
                         let v = s.iram[a];
                         let st = if a == s.sp() as usize {
                             Style::new().fg(Color::Black).bg(Color::LightMagenta)
-                        } else if v != app.prev_iram[a] {
+                        } else if v != app.session.prev_iram[a] {
                             CHANGED
                         } else if (bank..bank + 8).contains(&a) {
                             Style::new().fg(Color::LightBlue)
@@ -724,7 +708,7 @@ fn draw_memory(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_sfr_table(f: &mut Frame, app: &App, area: Rect) {
-    let s = &app.sim;
+    let s = &app.session.sim;
     let cols = if area.width >= 64 { 3 } else { 2 };
     let per_col = sfr::SFRS.len().div_ceil(cols);
     let lines: Vec<Line> = (0..per_col)
@@ -733,7 +717,7 @@ fn draw_sfr_table(f: &mut Frame, app: &App, area: Rect) {
             for c in 0..cols {
                 if let Some(&(name, addr)) = sfr::SFRS.get(c * per_col + r) {
                     let v = s.read_direct(addr, true);
-                    let changed = s.sfr(addr) != app.prev_sfr[(addr & 0x7F) as usize];
+                    let changed = s.sfr(addr) != app.session.prev_sfr[(addr & 0x7F) as usize];
                     spans.push(Span::styled(format!("{name:<5}"), LABEL));
                     spans.push(Span::styled(format!("{addr:02X} "), DIM));
                     spans.push(hex2(v, changed));
@@ -754,7 +738,7 @@ fn draw_ports(f: &mut Frame, app: &App, area: Rect) {
     let block = panel("Ports", focused);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let s = &app.sim;
+    let s = &app.session.sim;
     let mut lines: Vec<Line> = (0..4)
         .map(|p| {
             let latch = s.sfr(sfr::P0 + 0x10 * p as u8);
@@ -797,7 +781,7 @@ fn draw_serial(f: &mut Frame, app: &App, area: Rect) {
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
 
     let mut text = String::new();
-    for &b in &app.sim.uart.tx_log {
+    for &b in &app.session.sim.uart.tx_log {
         match b {
             b'\n' => text.push('\n'),
             b'\r' => {}

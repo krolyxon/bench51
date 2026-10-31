@@ -1,0 +1,24 @@
+[package]
+name = "bench51-gui"
+version.workspace = true
+edition.workspace = true
+description = "A Keil µVision-style desktop IDE for the Intel 8051, built on bench51"
+
+[dependencies]
+bench51-core.workspace = true
+clap.workspace = true
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "persistence",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+egui_tiles = { version = "0.18", features = ["serde"] }
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

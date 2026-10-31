@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=bench51
+GenericName=8051 IDE
+Comment=Intel 8051 assembler, simulator and debugger
+Exec=bench51-gui %F
+Icon=bench51-gui
+Terminal=false
+Categories=Development;IDE;Electronics;
+Keywords=8051;8052;MCS-51;assembler;simulator;debugger;keil;microcontroller;
+MimeType=text/x-asm;
+StartupWMClass=bench51-gui
