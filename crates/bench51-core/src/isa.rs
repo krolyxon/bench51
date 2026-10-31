@@ -28,7 +28,7 @@ pub enum Operand {
 
 impl Operand {
     /// Bytes this operand occupies after the opcode byte.
-    pub fn len(self) -> u8 {
+    pub(crate) fn len(self) -> u8 {
         match self {
             Operand::Imm8 | Operand::Direct | Operand::Bit | Operand::NotBit => 1,
             Operand::Addr11 | Operand::Rel => 1,

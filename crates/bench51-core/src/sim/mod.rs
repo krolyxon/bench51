@@ -385,7 +385,7 @@ mod example_tests {
 
     #[test]
     fn serial_hello_greets_and_echoes() {
-        let mut s = load(include_str!("../../examples/serial_hello.asm"));
+        let mut s = load(include_str!("../../../../examples/serial_hello.asm"));
         steps(&mut s, 60_000);
         assert_eq!(
             String::from_utf8_lossy(&s.uart.tx_log),
@@ -398,7 +398,7 @@ mod example_tests {
 
     #[test]
     fn timer_irq_ticks() {
-        let mut s = load(include_str!("../../examples/timer_irq.asm"));
+        let mut s = load(include_str!("../../../../examples/timer_irq.asm"));
         steps(&mut s, 5_000);
         // ~10000 cycles at one interrupt per 1000 cycles.
         assert!((3..=10).contains(&s.reg(7)), "R7 = {}", s.reg(7));
@@ -406,7 +406,7 @@ mod example_tests {
 
     #[test]
     fn button_counts_edges_while_idle() {
-        let mut s = load(include_str!("../../examples/button_int0.asm"));
+        let mut s = load(include_str!("../../../../examples/button_int0.asm"));
         steps(&mut s, 20);
         assert!(s.idle);
         for _ in 0..3 {
@@ -420,10 +420,10 @@ mod example_tests {
 
     #[test]
     fn bcd_and_lookup() {
-        let mut s = load(include_str!("../../examples/bcd_add.asm"));
+        let mut s = load(include_str!("../../../../examples/bcd_add.asm"));
         steps(&mut s, 20);
         assert_eq!((s.iram[0x31], s.iram[0x30]), (0x69, 0x12));
-        let mut s = load(include_str!("../../examples/lookup_movc.asm"));
+        let mut s = load(include_str!("../../../../examples/lookup_movc.asm"));
         steps(&mut s, 3 + 4 * 5 + 3); // setup, digits 0-3, then up to MOV P2,A
         assert_eq!(s.sfr(crate::sfr::P2), 0x66); // digit 4
     }
