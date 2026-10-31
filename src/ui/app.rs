@@ -1,12 +1,10 @@
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use bench51_core::files::{self, Loaded};
+use bench51_core::session::{MemSpace, SPEEDS, Session};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ratatui_textarea::{CursorMove, TextArea};
-
-use crate::asm::{self, AsmOutput};
-use crate::sim::{Sim, Stop, disasm};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -31,13 +29,7 @@ pub enum Focus {
     Serial,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemTab {
-    Iram,
-    Sfr,
-    Xram,
-    Code,
-}
+pub type MemTab = MemSpace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptKind {
@@ -52,27 +44,6 @@ pub struct Prompt {
     pub input: String,
 }
 
-/// Result of the last successful assembly, which the debugger runs.
-pub struct Build {
-    pub source: Vec<String>,
-    pub out: AsmOutput,
-    pub addr_to_line: HashMap<u16, usize>,
-}
-
-impl Build {
-    /// First address emitted by `line`, if any.
-    pub fn line_addr(&self, line: usize) -> Option<u16> {
-        self.out
-            .lines
-            .get(line)
-            .filter(|l| !l.bytes.is_empty())
-            .and_then(|l| l.addr)
-    }
-}
-
-/// Instructions executed per frame (~30 fps) for each speed setting.
-pub const SPEEDS: [u32; 8] = [1, 5, 25, 100, 500, 2_000, 10_000, 40_000];
-
 pub struct App {
     pub path: Option<PathBuf>,
     pub editor: TextArea<'static>,
@@ -82,27 +53,14 @@ pub struct App {
     pub focus: Focus,
     pub mem_tab: MemTab,
     pub mem_scroll: usize,
-    /// Last assembler result, even if it had errors (for diagnostics).
-    pub last_asm: Option<(String, AsmOutput)>,
-    /// Last error-free build, loaded into the simulator.
-    pub build: Option<Build>,
-    pub sim: Sim,
-    /// Breakpoints by source line.
-    pub breakpoints: HashSet<usize>,
-    pub running: bool,
-    /// The next run chunk starts a fresh run and may leave a breakpoint.
-    resume: bool,
-    pub speed: usize,
-    pub clock_mhz: f64,
-    pub status: String,
+    /// Simulator, build, breakpoints and run state.
+    pub session: Session,
     /// Selected line in the debug source view.
     pub src_cursor: usize,
     pub src_scroll: usize,
     pub out_scroll: usize,
     pub port_sel: (usize, u8),
     pub serial_input: String,
-    pub prev_iram: [u8; 256],
-    pub prev_sfr: [u8; 128],
     pub show_help: bool,
     pub prompt: Option<Prompt>,
     pub quit: bool,
@@ -123,28 +81,19 @@ impl App {
             focus: Focus::Source,
             mem_tab: MemTab::Iram,
             mem_scroll: 0,
-            last_asm: None,
-            build: None,
-            sim: Sim::new(),
-            breakpoints: HashSet::new(),
-            running: false,
-            resume: false,
-            speed: 5,
-            clock_mhz,
-            status: "F1 help · F7 assemble · F5 run · F11 step".into(),
+            session: Session::new(clock_mhz),
             src_cursor: 0,
             src_scroll: 0,
             out_scroll: 0,
             port_sel: (1, 0),
             serial_input: String::new(),
-            prev_iram: [0; 256],
-            prev_sfr: [0; 128],
             show_help: false,
             prompt: None,
             quit: false,
             quit_armed: false,
             external_edit: false,
         };
+        app.session.status = "F1 help · F7 assemble · F5 run · F11 step".into();
         match path {
             Some(p) => app.open(&p),
             None => app.set_text(TEMPLATE),
@@ -161,9 +110,7 @@ impl App {
         });
         crate::ui::draw::style_editor(&mut self.editor);
         self.saved_text = self.text();
-        self.breakpoints.clear();
-        self.build = None;
-        self.last_asm = None;
+        self.session.clear();
         self.focus = Focus::Source;
         self.serial_input.clear();
     }
@@ -178,9 +125,8 @@ impl App {
 
     /// Source differs from what the simulator is running.
     pub fn stale(&self) -> bool {
-        self.build
-            .as_ref()
-            .is_none_or(|b| b.source != self.editor.lines())
+        self.session
+            .is_stale(self.editor.lines().iter().map(String::as_str))
     }
 
     pub fn title(&self) -> String {
@@ -194,37 +140,24 @@ impl App {
     // ---- Files ----
 
     fn open(&mut self, path: &Path) {
-        let text = match std::fs::read_to_string(path) {
-            Ok(t) => t,
-            Err(e) => {
-                self.status = format!("cannot open {}: {e}", path.display());
-                return;
+        match files::load(path) {
+            Err(e) => self.session.status = e,
+            Ok(Loaded::Hex { source, bytes }) => {
+                self.set_text(&source);
+                self.saved_text.clear();
+                self.path = None;
+                self.assemble();
+                self.session.status = format!(
+                    "loaded {} ({bytes} bytes) and disassembled it",
+                    path.display()
+                );
             }
-        };
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("hex") || e.eq_ignore_ascii_case("ihx"))
-        {
-            match asm::hex::read(&text) {
-                Ok(bytes) => {
-                    let src = disassemble_image(&bytes, path);
-                    self.set_text(&src);
-                    self.saved_text.clear();
-                    self.path = None;
-                    self.assemble();
-                    self.status = format!(
-                        "loaded {} ({} bytes) and disassembled it",
-                        path.display(),
-                        bytes.len()
-                    );
-                }
-                Err(e) => self.status = format!("invalid HEX file: {e}"),
+            Ok(Loaded::Source(text)) => {
+                self.set_text(&text);
+                self.path = Some(path.to_path_buf());
+                self.mode = Mode::Edit;
+                self.session.status = format!("opened {}", path.display());
             }
-        } else {
-            self.set_text(&text);
-            self.path = Some(path.to_path_buf());
-            self.mode = Mode::Edit;
-            self.status = format!("opened {}", path.display());
         }
     }
 
@@ -241,10 +174,10 @@ impl App {
         match std::fs::write(&path, text) {
             Ok(()) => {
                 self.saved_text = self.text();
-                self.status = format!("saved {}", path.display());
+                self.session.status = format!("saved {}", path.display());
                 self.path = Some(path);
             }
-            Err(e) => self.status = format!("cannot save {}: {e}", path.display()),
+            Err(e) => self.session.status = format!("cannot save {}: {e}", path.display()),
         }
     }
 
@@ -266,7 +199,7 @@ impl App {
             None => {
                 let p = std::env::temp_dir().join(format!("bench51-{}.asm", std::process::id()));
                 if let Err(e) = std::fs::write(&p, self.text() + "\n") {
-                    self.status = format!("cannot write {}: {e}", p.display());
+                    self.session.status = format!("cannot write {}: {e}", p.display());
                     return;
                 }
                 (p, true)
@@ -280,11 +213,11 @@ impl App {
             let _ = std::fs::remove_file(&path);
         }
         match (result, text) {
-            (Err(e), _) => self.status = format!("cannot start editor: {e}"),
+            (Err(e), _) => self.session.status = format!("cannot start editor: {e}"),
             (Ok(s), _) if !s.success() => {
-                self.status = format!("editor exited with {s}; changes not loaded")
+                self.session.status = format!("editor exited with {s}; changes not loaded")
             }
-            (Ok(_), Err(e)) => self.status = format!("cannot read {}: {e}", path.display()),
+            (Ok(_), Err(e)) => self.session.status = format!("cannot read {}: {e}", path.display()),
             (Ok(_), Ok(text)) => self.reload(&text, !temp),
         }
     }
@@ -299,7 +232,7 @@ impl App {
             lines
         };
         if lines == self.editor.lines() {
-            self.status = "no changes from external editor".into();
+            self.session.status = "no changes from external editor".into();
             return;
         }
         let cursor = self.editor.cursor();
@@ -312,59 +245,31 @@ impl App {
             self.saved_text = self.text();
         }
         let n = self.editor.lines().len();
-        self.breakpoints.retain(|&l| l < n);
+        self.session.breakpoints.retain(|&l| l < n);
         if self.assemble() {
-            self.status = format!("reloaded from external editor; {}", self.status);
+            self.session.status = format!("reloaded from external editor; {}", self.session.status);
         }
     }
 
     // ---- Build & run ----
 
     /// Assembles the editor contents. On success the program is loaded
-    /// into a freshly reset simulator.
+    /// into a freshly reset simulator; on errors the cursor jumps to the
+    /// first one.
     pub fn assemble(&mut self) -> bool {
         let source = self.text();
-        let out = asm::assemble(&source);
-        let ok = out.ok();
+        let ok = self.session.assemble(&source, self.path.as_deref());
         if ok {
-            self.sim.load_code(out.bytes());
-            self.sim.reset();
-            self.running = false;
-            self.status = format!("assembled: {} bytes, 0 errors", out.code_size());
-            self.write_outputs(&out, &source);
-            self.build = Some(Build {
-                source: self.editor.lines().to_vec(),
-                addr_to_line: out.addr_to_line(),
-                out: out.clone(),
-            });
-            self.snapshot();
             self.follow_pc();
-        } else {
+        } else if let Some((_, out)) = &self.session.last_asm {
             let first = &out.diagnostics[0];
-            self.status = format!(
-                "{} error(s); line {}: {}",
-                out.diagnostics.len(),
-                first.line + 1,
-                first.msg
-            );
             self.editor
                 .move_cursor(CursorMove::Jump(first.line as u16, first.col as u16));
             self.mode = Mode::Edit;
             self.out_tab = OutTab::Errors;
         }
         self.out_scroll = 0;
-        self.last_asm = Some((source, out));
         ok
-    }
-
-    /// Writes `.lst` and `.hex` next to a saved source file.
-    fn write_outputs(&mut self, out: &AsmOutput, source: &str) {
-        let Some(path) = &self.path else { return };
-        let res = std::fs::write(path.with_extension("lst"), out.listing(source))
-            .and_then(|_| std::fs::write(path.with_extension("hex"), out.intel_hex()));
-        if let Err(e) = res {
-            self.status = format!("assembled, but writing .lst/.hex failed: {e}");
-        }
     }
 
     /// Makes sure an up-to-date build is loaded; returns false on errors.
@@ -379,72 +284,37 @@ impl App {
         true
     }
 
-    pub fn bp_addrs(&self) -> HashSet<u16> {
-        let Some(b) = &self.build else {
-            return HashSet::new();
-        };
-        self.breakpoints
-            .iter()
-            .filter_map(|&l| b.line_addr(l))
-            .collect()
-    }
-
-    pub fn snapshot(&mut self) {
-        self.prev_iram = self.sim.iram;
-        self.prev_sfr = self.sim.sfr;
-    }
-
-    pub fn pc_line(&self) -> Option<usize> {
-        self.build.as_ref()?.addr_to_line.get(&self.sim.pc).copied()
-    }
-
-    /// Scrolls the source view so the PC line is visible.
+    /// Moves the source cursor to the PC line.
     pub fn follow_pc(&mut self) {
-        if let Some(l) = self.pc_line() {
+        if let Some(l) = self.session.pc_line() {
             self.src_cursor = l;
         }
     }
 
-    fn report(&mut self, stop: Stop) {
-        self.running = false;
-        self.status = match stop {
-            Stop::Breakpoint(pc) => format!("breakpoint at {pc:04X}h"),
-            Stop::ReservedOpcode { pc, opcode } => {
-                format!("reserved opcode {opcode:02X}h at {pc:04X}h — stopped")
-            }
-            Stop::PowerDown => "CPU in power-down mode (PCON.PD) — reset to continue".into(),
-            Stop::Target | Stop::Budget => format!("stopped at {:04X}h", self.sim.pc),
-        };
-        self.follow_pc();
-    }
-
-    fn step_cmd(&mut self, f: impl FnOnce(&mut Sim, &HashSet<u16>) -> Stop) {
+    /// Runs a session command once a build is loaded, then follows the PC.
+    fn debug_cmd(&mut self, f: impl FnOnce(&mut Session)) {
         if !self.ensure_built() {
             return;
         }
-        self.running = false;
-        self.snapshot();
-        let bps = self.bp_addrs();
-        let stop = f(&mut self.sim, &bps);
-        match stop {
-            Stop::Target => {
-                self.status = format!("PC = {:04X}h", self.sim.pc);
-                self.follow_pc();
-            }
-            Stop::Budget => self.report(Stop::Budget),
-            s => self.report(s),
-        }
+        f(&mut self.session);
+        self.follow_pc();
     }
 
     fn toggle_run(&mut self) {
-        if self.running {
-            self.running = false;
-            self.status = format!("paused at {:04X}h", self.sim.pc);
+        if self.session.running {
+            self.session.pause();
             self.follow_pc();
         } else if self.ensure_built() {
-            self.running = true;
-            self.resume = true;
-            self.status = "running…".into();
+            self.session.start();
+        }
+    }
+
+    /// Source line the cursor is on in the current mode.
+    fn cursor_line(&self) -> usize {
+        if self.mode == Mode::Debug {
+            self.src_cursor
+        } else {
+            self.editor.cursor().0
         }
     }
 
@@ -452,59 +322,27 @@ impl App {
         if !self.ensure_built() {
             return;
         }
-        let line = if self.mode == Mode::Debug {
-            self.src_cursor
-        } else {
-            self.editor.cursor().0
-        };
-        let Some(target) = self.build.as_ref().and_then(|b| b.line_addr(line)) else {
-            self.status = "no code on that line".into();
-            return;
-        };
-        self.step_cmd(|s, bps| {
-            let mut bps = bps.clone();
-            bps.insert(target);
-            match s.run(5_000_000, &bps, true) {
-                Stop::Breakpoint(pc) if pc == target => Stop::Target,
-                other => other,
-            }
+        let line = self.cursor_line();
+        self.debug_cmd(|s| {
+            s.run_to_line(line);
         });
     }
 
     fn reset(&mut self) {
-        self.sim.reset();
-        self.running = false;
-        self.snapshot();
+        self.session.reset();
         self.follow_pc();
-        self.status = "reset".into();
     }
 
     fn toggle_breakpoint(&mut self) {
-        let line = if self.mode == Mode::Debug {
-            self.src_cursor
-        } else {
-            self.editor.cursor().0
-        };
-        if !self.breakpoints.remove(&line) {
-            self.breakpoints.insert(line);
-        }
+        let line = self.cursor_line();
+        self.session.toggle_breakpoint(line);
     }
 
     /// Called once per frame.
     pub fn tick(&mut self) {
-        if !self.running {
-            return;
-        }
-        self.snapshot();
-        let bps = self.bp_addrs();
-        let resume = std::mem::take(&mut self.resume);
-        match self.sim.run(SPEEDS[self.speed], &bps, resume) {
-            Stop::Budget => {
-                if let Some(l) = self.pc_line() {
-                    self.src_cursor = l;
-                }
-            }
-            s => self.report(s),
+        if self.session.running {
+            self.session.tick();
+            self.follow_pc();
         }
     }
 
@@ -541,7 +379,7 @@ impl App {
             (KeyCode::Char('q'), true) => {
                 if self.dirty() && !self.quit_armed {
                     self.quit_armed = true;
-                    self.status = "unsaved changes — press Ctrl-Q again to quit".into();
+                    self.session.status = "unsaved changes — press Ctrl-Q again to quit".into();
                 } else {
                     self.quit = true;
                 }
@@ -571,12 +409,9 @@ impl App {
             }
             (KeyCode::F(8), _) => self.run_to_cursor(),
             (KeyCode::F(9), _) => self.toggle_breakpoint(),
-            (KeyCode::F(10), _) => self.step_cmd(|s, b| s.step_over(5_000_000, b)),
-            (KeyCode::F(11), _) => self.step_cmd(|s, _| match s.step() {
-                Ok(()) => Stop::Target,
-                Err(e) => e,
-            }),
-            (KeyCode::F(12), _) => self.step_cmd(|s, b| s.step_out(5_000_000, b)),
+            (KeyCode::F(10), _) => self.debug_cmd(Session::step_over),
+            (KeyCode::F(11), _) => self.debug_cmd(Session::step_into),
+            (KeyCode::F(12), _) => self.debug_cmd(Session::step_out),
             _ => match self.mode {
                 Mode::Edit => self.on_edit_key(key),
                 Mode::Debug => self.on_debug_key(key),
@@ -595,7 +430,7 @@ impl App {
             KeyCode::Down if alt => self.out_scroll += 1,
             KeyCode::PageUp if alt => self.out_scroll = self.out_scroll.saturating_sub(20),
             KeyCode::PageDown if alt => self.out_scroll += 20,
-            KeyCode::Esc if self.running => self.toggle_run(),
+            KeyCode::Esc if self.session.running => self.toggle_run(),
             _ => {
                 self.editor.input(key);
             }
@@ -608,7 +443,7 @@ impl App {
                 KeyCode::Enter => {
                     let mut bytes = std::mem::take(&mut self.serial_input).into_bytes();
                     bytes.push(b'\r');
-                    self.sim.uart_send(&bytes);
+                    self.session.sim.uart_send(&bytes);
                     return;
                 }
                 KeyCode::Backspace => {
@@ -628,7 +463,7 @@ impl App {
             KeyCode::Tab => self.cycle_focus(true),
             KeyCode::BackTab => self.cycle_focus(false),
             KeyCode::Esc => {
-                if self.running {
+                if self.session.running {
                     self.toggle_run();
                 } else if self.focus == Focus::Serial {
                     self.focus = Focus::Source;
@@ -637,9 +472,9 @@ impl App {
                 }
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.speed = (self.speed + 1).min(SPEEDS.len() - 1)
+                self.session.speed = (self.session.speed + 1).min(SPEEDS.len() - 1)
             }
-            KeyCode::Char('-') => self.speed = self.speed.saturating_sub(1),
+            KeyCode::Char('-') => self.session.speed = self.session.speed.saturating_sub(1),
             KeyCode::Char('?') => self.show_help = true,
             // Letter aliases for terminals that swallow function keys.
             KeyCode::Char('r') => self.toggle_run(),
@@ -684,6 +519,7 @@ impl App {
 
     fn move_src(&mut self, code: KeyCode, page: usize) {
         let max = self
+            .session
             .build
             .as_ref()
             .map_or(0, |b| b.source.len().saturating_sub(1));
@@ -694,7 +530,7 @@ impl App {
             KeyCode::PageDown => self.src_cursor + page,
             KeyCode::Home => 0,
             KeyCode::End => max,
-            KeyCode::Char('.') => self.pc_line().unwrap_or(self.src_cursor),
+            KeyCode::Char('.') => self.session.pc_line().unwrap_or(self.src_cursor),
             _ => self.src_cursor,
         }
         .min(max);
@@ -745,7 +581,7 @@ impl App {
             KeyCode::Left => *bit = (*bit + 1).min(7),
             KeyCode::Right => *bit = bit.saturating_sub(1),
             KeyCode::Char(' ') | KeyCode::Enter => {
-                self.sim.pins[*port] ^= 1 << *bit;
+                self.session.sim.pins[*port] ^= 1 << *bit;
             }
             _ => {}
         }
@@ -786,38 +622,14 @@ impl App {
             parts.first().and_then(|s| parse(s)),
             parts.get(1).and_then(|s| parse(s)),
         ) else {
-            self.status = "usage: <addr> <value> (hex), e.g. 30 FF".into();
+            self.session.status = "usage: <addr> <value> (hex), e.g. 30 FF".into();
             return;
         };
         if val > 0xFF {
-            self.status = "value must be a byte".into();
+            self.session.status = "value must be a byte".into();
             return;
         }
-        let v = val as u8;
-        let ok = match self.mem_tab {
-            MemTab::Iram if addr <= 0xFF => {
-                self.sim.iram[addr as usize] = v;
-                true
-            }
-            MemTab::Sfr if (0x80..=0xFF).contains(&addr) => {
-                self.sim.set_sfr(addr as u8, v);
-                true
-            }
-            MemTab::Xram if addr <= 0xFFFF => {
-                self.sim.xram[addr as usize] = v;
-                true
-            }
-            MemTab::Code if addr <= 0xFFFF => {
-                self.sim.code[addr as usize] = v;
-                true
-            }
-            _ => false,
-        };
-        self.status = if ok {
-            format!("wrote {v:02X}h at {addr:X}h")
-        } else {
-            "address out of range".into()
-        };
+        self.session.poke(self.mem_tab, addr, val as u8);
     }
 }
 
@@ -846,46 +658,6 @@ fn editor_command(path: &Path, line: usize) -> Command {
     cmd.arg("-c").arg(format!("{editor} \"$@\"")).arg("sh");
     cmd.args(goto).arg(path);
     cmd
-}
-
-/// Builds an assembler source from a HEX image by disassembling each
-/// contiguous run of bytes. Reassembling it reproduces the image exactly.
-fn disassemble_image(bytes: &[(u16, u8)], path: &Path) -> String {
-    let mut code = Box::new([0u8; 0x10000]);
-    let mut used = vec![false; 0x10000];
-    for &(a, b) in bytes {
-        code[a as usize] = b;
-        used[a as usize] = true;
-    }
-    let mut src = format!("; disassembled from {}\n", path.display());
-    let mut addr = 0usize;
-    while addr < 0x10000 {
-        if !used[addr] {
-            addr += 1;
-            continue;
-        }
-        src.push_str(&format!(
-            "\n        ORG {}\n",
-            crate::sfr::hex16(addr as u16)
-        ));
-        while addr < 0x10000 && used[addr] {
-            let d = disasm::disassemble(&code, addr as u16);
-            let size = d.size as usize;
-            if (addr..addr + size).all(|a| a < 0x10000 && used[a]) {
-                src.push_str(&format!("        {:<24}; {:04X}\n", d.text, addr));
-                addr += size;
-            } else {
-                src.push_str(&format!(
-                    "        DB {:<21}; {:04X}\n",
-                    crate::sfr::hex8(code[addr]),
-                    addr
-                ));
-                addr += 1;
-            }
-        }
-    }
-    src.push_str("        END\n");
-    src
 }
 
 const TEMPLATE: &str = "\
