@@ -1,11 +1,14 @@
-# bench51 — a TUI 8051 assembler, simulator & debugger
+# bench51 — an 8051 assembler, simulator & debugger
 
-A small, Keil µVision-style IDE for the Intel 8051 that runs in your terminal.
-Write assembly in the built-in editor, assemble it, inspect the listing and
-Intel HEX output, then run, pause and single-step the program while watching
-registers, SFRs, memory, ports, timers, interrupts and the serial port.
+A small, Keil µVision-style IDE for the Intel 8051, in two flavours: a TUI
+that runs in your terminal, and a desktop GUI (`bench51-gui`) laid out like
+µVision. Write assembly in the built-in editor, assemble it, inspect the
+listing and Intel HEX output, then run, pause and single-step the program
+while watching registers, SFRs, memory, ports, timers, interrupts and the
+serial port.
 
-Built in Rust with [ratatui](https://ratatui.rs). It is a learning tool, not a
+Built in Rust with [ratatui](https://ratatui.rs) and
+[egui](https://github.com/emilk/egui). It is a learning tool, not a
 cycle-exact replacement for a vendor simulator.
 
 ![Debugging serial_hello.asm: source, registers, peripherals, IRAM and the UART console](docs/screenshots/debug_serial.png)
@@ -81,6 +84,82 @@ cargo run --release -- --assemble prog.asm -o out.hex --lst out.lst
 `--clock <MHz>` sets the oscillator frequency used for the elapsed-time display
 (default 11.0592).
 
+## Desktop GUI
+
+`bench51-gui` is the same assembler and simulator behind a µVision-style
+window: menus and toolbar, a Project window, the editor with breakpoint
+gutter, Build Output, and in a debug session the Registers, Disassembly,
+Memory, Symbols, UART #1, Ports, Timers and Interrupts windows. Every window
+docks and tabs wherever you drag it; the edit and debug layouts are
+remembered separately, as in µVision. It follows a monochrome,
+dot-matrix design (Space Grotesk, Space Mono and Doto, bundled) in a dark and
+a light theme.
+
+![Debug session in the GUI: registers, source with the PC, disassembly, memory and UART #1](docs/screenshots/gui_debug.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/gui_edit.png" alt="Editor and Keil-style build output"></td>
+    <td width="50%"><img src="docs/screenshots/gui_breakpoint_light.png" alt="Stopped at a breakpoint in a timer ISR, light theme"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Editor + build output</sub></td>
+    <td align="center"><sub>Breakpoint in a timer ISR, light theme</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/gui_peripherals.png" alt="Ports, timers and interrupts windows docked side by side"></td>
+    <td width="50%"><img src="docs/screenshots/gui_errors.png" alt="Assembler errors in the gutter and Build Output"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Peripheral windows, rearranged</sub></td>
+    <td align="center"><sub>Assembler errors</sub></td>
+  </tr>
+</table>
+
+```bash
+cargo install --path crates/bench51-gui                  # installs `bench51-gui`
+
+cargo run --release -p bench51-gui                        # welcome screen
+cargo run --release -p bench51-gui -- examples/*.asm      # open several files
+cargo run --release -p bench51-gui -- --theme light firmware.hex
+```
+
+`--theme system|dark|light` overrides the theme chosen in View → Theme, and
+`--clock <MHz>` the Xtal set in Project → Options for Target.
+
+The keys are µVision's, with the TUI's as aliases:
+
+| Key | Action |
+| --- | --- |
+| F7 | build target (also writes `.lst` and `.hex` next to a saved file) |
+| Ctrl-F5 / F4 | start / stop the debug session |
+| F5 | run / stop |
+| F11 / F10 | step into / step over |
+| Ctrl-F11 / F12 | step out |
+| Ctrl-F10 / F8 | run to the cursor line |
+| F9 / Ctrl-Shift-F9 | toggle breakpoint / remove all breakpoints |
+| F6 | reset the CPU |
+| Ctrl-N / Ctrl-O / Ctrl-S / Ctrl-W | new / open / save / close |
+| Ctrl-F | find |
+| F1 | all shortcuts |
+
+Click the gutter to toggle a breakpoint, double-click a byte in Memory to
+change it, click a pin in Ports to hold it low from outside, and click the
+bit chips in Registers, Timers and Interrupts to flip SFR bits. Files can be
+dropped onto the window.
+
+On Linux it runs on Wayland and X11 and uses the XDG desktop portal for file
+dialogs. To add it to your application launcher:
+
+```bash
+install -Dm644 crates/bench51-gui/assets/bench51-gui.desktop ~/.local/share/applications/bench51-gui.desktop
+install -Dm644 crates/bench51-gui/assets/bench51-gui.svg ~/.local/share/icons/hicolor/scalable/apps/bench51-gui.svg
+```
+
+It also builds for Windows and macOS. On Debian or Ubuntu, first install the
+packages egui needs: `libxcb-render0-dev libxcb-shape0-dev
+libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`.
+
 ## Keys
 
 | Key | Action |
@@ -133,10 +212,15 @@ Letter shortcuts work too, for terminals that swallow function keys:
 ## Development
 
 ```bash
-cargo test     # assembler, CPU, peripheral and example-program tests
-cargo clippy
+cargo test --workspace     # assembler, CPU, peripheral, session and example-program tests
+cargo clippy --workspace --all-targets
 ```
 
-Code layout: `src/isa.rs` (opcode table shared by everything), `src/asm/`
-(assembler, listing, Intel HEX), `src/sim/` (CPU, peripherals, disassembler),
-`src/ui/` (ratatui front end).
+Code layout:
+
+- `crates/bench51-core/`, shared by both front ends: `isa.rs` (opcode
+  table), `asm/` (assembler, listing, Intel HEX), `sim/` (CPU, peripherals,
+  disassembler), `session.rs` (build, run, step and breakpoints),
+  `syntax.rs` (highlighting tokens), `files.rs` (HEX loading)
+- `src/` is the `bench51` TUI (ratatui).
+- `crates/bench51-gui/` is the `bench51-gui` desktop app (egui).
