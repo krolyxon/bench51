@@ -1,0 +1,178 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (matching the version in Cargo.toml) builds bench51
+# for every target, publishes a GitHub release with the archives, checksums
+# and the CHANGELOG.md section as notes, then installs it with the one-line
+# installers on each OS. Pull requests that touch the release machinery get
+# a dry run: everything except publishing.
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - install.sh
+      - install.ps1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 22.04 keeps the glibc requirement low for older distributions.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          # Cross-compiled on Apple silicon, so it can't be run here.
+          - { target: x86_64-apple-darwin, os: macos-latest, cross: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bench51 -p bench51-gui
+
+      - name: Package
+        shell: bash
+        run: |
+          name=bench51-${{ matrix.target }}
+          ext=
+          if [ "$RUNNER_OS" = Windows ]; then ext=.exe; fi
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/bench51$ext" "target/${{ matrix.target }}/release/bench51-gui$ext" "dist/$name/"
+          cp README.md LICENSE CHANGELOG.md "dist/$name/"
+          if [ "$RUNNER_OS" = Linux ]; then
+            mkdir -p "dist/$name/share/applications" "dist/$name/share/icons/hicolor/scalable/apps"
+            cp crates/bench51-gui/assets/bench51-gui.desktop "dist/$name/share/applications/"
+            cp crates/bench51-gui/assets/bench51-gui.svg "dist/$name/share/icons/hicolor/scalable/apps/"
+          fi
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+          ls -l
+
+      - name: Install the archive and run it
+        if: runner.os != 'Windows' && !matrix.cross
+        shell: bash
+        run: |
+          sh install.sh --archive "dist/bench51-${{ matrix.target }}.tar.gz" --dir "$RUNNER_TEMP/bin" --no-desktop
+          "$RUNNER_TEMP/bin/bench51-gui" --version
+          printf 'ORG 0\nloop: MOV A,#1\n  SJMP loop\n  END\n' > "$RUNNER_TEMP/t.asm"
+          "$RUNNER_TEMP/bin/bench51" --assemble "$RUNNER_TEMP/t.asm"
+          test -s "$RUNNER_TEMP/t.hex"
+
+      - name: Install the archive and run it
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./install.ps1 -Archive "dist/bench51-${{ matrix.target }}.zip" -InstallDir "$env:RUNNER_TEMP\bench51" -NoShortcut
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The GUI has no console; check its exit code instead of its output.
+          $gui = Start-Process -FilePath "$env:RUNNER_TEMP\bench51\bench51-gui.exe" -ArgumentList '--version' -Wait -PassThru
+          if ($gui.ExitCode -ne 0) { exit 1 }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench51-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          awk -v v="$version" '/^## \[/ { if (on) exit; on = index($0, "[" v "]") } on' CHANGELOG.md | tail -n +2 > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "bench51 $GITHUB_REF_NAME" --notes-file notes.md
+
+  # Installs the published release exactly as the README tells people to.
+  verify:
+    name: install on ${{ matrix.os }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: One-line install
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_REF_NAME/install.sh" | sh
+          "$HOME/.local/bin/bench51" --version | grep -F "${GITHUB_REF_NAME#v}"
+          "$HOME/.local/bin/bench51-gui" --version | grep -F "${GITHUB_REF_NAME#v}"
+
+      - name: One-line install
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm "https://raw.githubusercontent.com/$env:GITHUB_REPOSITORY/$env:GITHUB_REF_NAME/install.ps1" | iex
+          $version = & "$env:LOCALAPPDATA\Programs\bench51\bench51.exe" --version
+          if ($version -notmatch [regex]::Escape($env:GITHUB_REF_NAME.TrimStart('v'))) { exit 1 }
+          if (-not (Test-Path "$([Environment]::GetFolderPath('Programs'))\bench51.lnk")) { exit 1 }
