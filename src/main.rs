@@ -1,12 +1,9 @@
-mod asm;
-mod isa;
-mod sfr;
-mod sim;
 mod ui;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use bench51_core::asm;
 use clap::Parser;
 
 /// Intel 8051 assembler, simulator and TUI debugger.

@@ -1,10 +1,33 @@
-[package]
-name = "bench51"
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.dependencies]
+bench51-core = { path = "crates/bench51-core" }
+clap = { version = "4.5.54", features = ["derive"] }
+
+[package]
+name = "bench51"
+version.workspace = true
+edition.workspace = true
 description = "A TUI Intel 8051 assembler, simulator and debugger"
 
 [dependencies]
-clap = { version = "4.5.54", features = ["derive"] }
+bench51-core.workspace = true
+clap.workspace = true
 ratatui = "0.30"
 ratatui-textarea = "0.9"
+
+[lints]
+workspace = true
+
+# egui and wgpu are unusably slow without optimisation; keep our own crates
+# quick to rebuild.
+[profile.dev.package."*"]
+opt-level = 2
