@@ -5,6 +5,9 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [workspace.dependencies]
 bench51-core = { path = "crates/bench51-core" }
 clap = { version = "4.5.54", features = ["derive"] }
@@ -20,6 +23,9 @@ bench51-core.workspace = true
 clap.workspace = true
 ratatui = "0.30"
 ratatui-textarea = "0.9"
+
+[lints]
+workspace = true
 
 # egui and wgpu are unusably slow without optimisation; keep our own crates
 # quick to rebuild.

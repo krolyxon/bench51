@@ -5,3 +5,6 @@ edition.workspace = true
 description = "Intel 8051 assembler, simulator and debugger session shared by the bench51 front ends"
 
 [dependencies]
+
+[lints]
+workspace = true
