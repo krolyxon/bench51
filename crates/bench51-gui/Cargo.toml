@@ -19,3 +19,6 @@ eframe = { version = "0.37", default-features = false, features = [
 egui_tiles = { version = "0.18", features = ["serde"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

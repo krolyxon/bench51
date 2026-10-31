@@ -1,5 +1,17 @@
 # bench51 — an 8051 assembler, simulator & debugger
 
+[![CI](https://img.shields.io/github/actions/workflow/status/krolyxon/bench51/ci.yml?branch=master&style=flat-square&label=CI&labelColor=000000)](https://github.com/krolyxon/bench51/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkrolyxon%2Fbench51%2Fmaster%2FCargo.toml&query=%24.workspace.package.version&label=version&style=flat-square&labelColor=000000&color=333333)](Cargo.toml)
+[![Top language](https://img.shields.io/github/languages/top/krolyxon/bench51?style=flat-square&logo=rust&logoColor=white&labelColor=000000&color=333333)](https://github.com/krolyxon/bench51)
+[![Lines of code](https://img.shields.io/badge/lines%20of%20code-9.8k-333333?style=flat-square&labelColor=000000)](crates)
+[![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-333333?style=flat-square&labelColor=000000)](Cargo.toml)
+[![License](https://img.shields.io/github/license/krolyxon/bench51?style=flat-square&labelColor=000000&color=333333)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-333333?style=flat-square&labelColor=000000)](#usage)
+[![Target](https://img.shields.io/badge/target-Intel%208051%20%28MCS--51%29-D71921?style=flat-square&labelColor=000000)](https://en.wikipedia.org/wiki/Intel_8051)
+[![egui](https://img.shields.io/badge/GUI-egui-333333?style=flat-square&labelColor=000000)](https://github.com/emilk/egui)
+[![ratatui](https://img.shields.io/badge/TUI-ratatui-333333?style=flat-square&labelColor=000000)](https://ratatui.rs)
+[![Last commit](https://img.shields.io/github/last-commit/krolyxon/bench51?style=flat-square&labelColor=000000&color=333333)](https://github.com/krolyxon/bench51/commits)
+
 A small, Keil µVision-style IDE for the Intel 8051. Write assembly in the
 editor, build it, inspect the listing and Intel HEX output, then run, pause
 and single-step the program while watching registers, SFRs, memory, ports,
