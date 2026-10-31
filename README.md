@@ -1,12 +1,13 @@
 # bench51 — an 8051 assembler, simulator & debugger
 
 [![CI](https://img.shields.io/github/actions/workflow/status/krolyxon/bench51/ci.yml?branch=master&style=flat-square&label=CI&labelColor=000000)](https://github.com/krolyxon/bench51/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2Fkrolyxon%2Fbench51%2Fmaster%2FCargo.toml&query=%24.workspace.package.version&label=version&style=flat-square&labelColor=000000&color=333333)](Cargo.toml)
+[![Release](https://img.shields.io/github/v/release/krolyxon/bench51?style=flat-square&label=release&labelColor=000000&color=333333)](https://github.com/krolyxon/bench51/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/krolyxon/bench51/total?style=flat-square&labelColor=000000&color=333333)](https://github.com/krolyxon/bench51/releases)
 [![Top language](https://img.shields.io/github/languages/top/krolyxon/bench51?style=flat-square&logo=rust&logoColor=white&labelColor=000000&color=333333)](https://github.com/krolyxon/bench51)
 [![Lines of code](https://img.shields.io/badge/lines%20of%20code-9.8k-333333?style=flat-square&labelColor=000000)](crates)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-333333?style=flat-square&labelColor=000000)](Cargo.toml)
 [![License](https://img.shields.io/github/license/krolyxon/bench51?style=flat-square&labelColor=000000&color=333333)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-333333?style=flat-square&labelColor=000000)](#usage)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-333333?style=flat-square&labelColor=000000)](#install)
 [![Target](https://img.shields.io/badge/target-Intel%208051%20%28MCS--51%29-D71921?style=flat-square&labelColor=000000)](https://en.wikipedia.org/wiki/Intel_8051)
 [![egui](https://img.shields.io/badge/GUI-egui-333333?style=flat-square&labelColor=000000)](https://github.com/emilk/egui)
 [![ratatui](https://img.shields.io/badge/TUI-ratatui-333333?style=flat-square&labelColor=000000)](https://ratatui.rs)
@@ -88,15 +89,47 @@ Linux, in a window or right in the terminal.
 - **Dark and light themes** in a monochrome, dot-matrix design (Space
   Grotesk, Space Mono and Doto, bundled).
 
+## Install
+
+Linux and macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/krolyxon/bench51/master/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/krolyxon/bench51/master/install.ps1 | iex
+```
+
+Both install `bench51-gui` and `bench51` from the
+[latest release](https://github.com/krolyxon/bench51/releases/latest) and
+verify the download against its SHA-256 checksum:
+
+- **Linux and macOS:** the binaries go into `~/.local/bin`, and on Linux the
+  app is added to your application menu. Options go after `sh -s --`:
+  `--version v0.2.0` pins a release, `--dir /usr/local/bin` picks another
+  directory, `--archive <file>` installs a downloaded archive offline
+  (handy on lab PCs), and `--uninstall` removes it.
+- **Windows:** it installs to `%LOCALAPPDATA%\Programs\bench51`, adds that to
+  your PATH and adds a Start menu entry. `-Uninstall` removes it.
+
+Prebuilt binaries cover Linux (x86_64, aarch64), Windows (x86_64) and macOS
+(Apple silicon, Intel). To build from source instead, with a Rust toolchain:
+
+```bash
+cargo install --locked --git https://github.com/krolyxon/bench51 bench51-gui   # the desktop app
+cargo install --locked --git https://github.com/krolyxon/bench51 bench51       # the terminal app
+```
+
 ## Usage
 
 ```bash
-cargo install --path crates/bench51-gui                  # installs `bench51-gui`
-
-cargo run --release -p bench51-gui                        # welcome screen
-cargo run --release -p bench51-gui -- examples/*.asm      # open several files
-cargo run --release -p bench51-gui -- firmware.hex        # disassemble & debug a HEX file
-cargo run --release -p bench51-gui -- --theme light
+bench51-gui                          # welcome screen
+bench51-gui examples/*.asm           # open several files
+bench51-gui firmware.hex             # disassemble & debug a HEX file
+bench51-gui --theme light
 ```
 
 `--theme system|dark|light` overrides the theme chosen in View → Theme, and
@@ -104,16 +137,9 @@ cargo run --release -p bench51-gui -- --theme light
 11.0592), which is used for the elapsed-time display.
 
 On Linux it runs on Wayland and X11 and uses the XDG desktop portal for file
-dialogs. To add it to your application launcher:
-
-```bash
-install -Dm644 crates/bench51-gui/assets/bench51-gui.desktop ~/.local/share/applications/bench51-gui.desktop
-install -Dm644 crates/bench51-gui/assets/bench51-gui.svg ~/.local/share/icons/hicolor/scalable/apps/bench51-gui.svg
-```
-
-It also builds for Windows and macOS. On Debian or Ubuntu, first install the
-packages egui needs: `libxcb-render0-dev libxcb-shape0-dev
-libxcb-xfixes0-dev libxkbcommon-dev libssl-dev`.
+dialogs. Building it from source on Debian or Ubuntu needs the packages egui
+links against: `libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+libxkbcommon-dev libssl-dev`.
 
 ## Keys
 
@@ -168,15 +194,13 @@ Makefiles.
 </table>
 
 ```bash
-cargo install --path .                               # installs the `bench51` binary
-
-cargo run --release -- examples/serial_hello.asm      # open in the TUI
-cargo run --release                                   # start with a template
-cargo run --release -- firmware.hex                   # disassemble & debug a HEX file
+bench51 examples/serial_hello.asm     # open in the TUI
+bench51                               # start with a template
+bench51 firmware.hex                  # disassemble & debug a HEX file
 
 # Headless assembly: writes prog.hex and prog.lst
-cargo run --release -- --assemble prog.asm
-cargo run --release -- --assemble prog.asm -o out.hex --lst out.lst
+bench51 --assemble prog.asm
+bench51 --assemble prog.asm -o out.hex --lst out.lst
 ```
 
 `--clock <MHz>` sets the oscillator frequency used for the elapsed-time display
@@ -235,9 +259,23 @@ Letter shortcuts work too, for terminals that swallow function keys:
 ## Development
 
 ```bash
-cargo test --workspace     # assembler, CPU, peripheral, session and example-program tests
+cargo run --release -p bench51-gui     # the desktop app
+cargo run --release -p bench51         # the terminal app
+cargo test --workspace                 # assembler, CPU, peripheral, session and example-program tests
 cargo clippy --workspace --all-targets
 ```
+
+Releasing: bump `version` in `Cargo.toml`, add a section to
+[CHANGELOG.md](CHANGELOG.md), merge, then tag and push:
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+The release workflow checks that the tag matches `Cargo.toml` and builds
+every target. It publishes the archives and `SHA256SUMS` with that
+changelog section as the release notes, then installs the result with the
+one-liners on Linux, macOS and Windows.
 
 Code layout:
 
