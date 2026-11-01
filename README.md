@@ -65,8 +65,8 @@ Linux, in a window or right in the terminal.
   UART #1, Ports, Timers and Interrupts windows. Every window docks and tabs
   wherever you drag it; the edit and debug layouts are remembered separately,
   as in µVision.
-- **Editor** with syntax highlighting, undo/redo, find, and breakpoint, error
-  and PC markers in the gutter.
+- **Editor** with Vim keybindings (or standard ones, in Settings), syntax
+  highlighting, find, and breakpoint, error and PC markers in the gutter.
 - **Two-pass assembler** for the full 8051 instruction set (all 255 opcodes):
   - labels, expressions (`+ - * / MOD AND OR XOR NOT SHL SHR HIGH LOW`, `$`)
   - number formats `42`, `2Ah`, `0x2A`, `101010b`, `52o`, `'*'`
@@ -132,9 +132,10 @@ bench51-gui firmware.hex             # disassemble & debug a HEX file
 bench51-gui --theme light
 ```
 
-`--theme system|dark|light` overrides the theme chosen in View → Theme, and
-`--clock <MHz>` the Xtal set in Project → Options for Target (default
-11.0592), which is used for the elapsed-time display.
+`--theme system|dark|light` and `--keymap vim|standard` override the choices
+in the Settings menu for one run. `--clock <MHz>` overrides the Xtal set in
+Project → Options for Target (default 11.0592), which is used for the
+elapsed-time display.
 
 On Linux it runs on Wayland and X11 and uses the XDG desktop portal for file
 dialogs. Building it from source on Debian or Ubuntu needs the packages egui
@@ -163,6 +164,33 @@ Click the gutter to toggle a breakpoint, double-click a byte in Memory to
 change it, click a pin in Ports to hold it low from outside, and click the
 bit chips in Registers, Timers and Interrupts to flip SFR bits. Files can be
 dropped onto the window.
+
+### Editing with Vim keys
+
+The editor starts in Vim's Normal mode, with a block cursor and a mode line
+along its bottom edge:
+
+- **Modes:** `i a I A o O` to insert, `v V` for Visual and Visual Line, Esc
+  to go back.
+- **Motions:** `h j k l w b e W B E 0 ^ $ gg G f t F T ; , % { } H M L`,
+  Ctrl-D/U/F/B. All take counts (`5j`, `3w`).
+- **Operators:** `d c y > <` with any motion or text object (`iw aw i" a"
+  i( a( ip`), doubled for whole lines (`dd`, `yy`, `>>`). Also
+  `x X D C s S r J ~ p P`.
+- **Repeat and undo:** `u` undoes, Ctrl-R redoes, `.` repeats the last
+  change, and `qa`…`q` / `@a` record and replay a macro.
+- **Search:** `/ ? n N * #`; `:noh` clears the highlight.
+- **Assembly helpers:** `gd` jumps to a label's definition, `gt`/`gT`
+  switch files, and new lines line up with the instruction column after a
+  label.
+- **Commands:** `:w`, `:q`, `:wq`, `:e file`, `:42`, and `:make` to build.
+- **Clipboard:** yanks and deletes also go to the system clipboard, and
+  Ctrl+V pastes from it.
+- **Debug sessions:** the editor is read-only, but moving, searching and
+  yanking still work.
+
+Settings → Keybindings → Standard switches to ordinary editing: type to
+insert, with Ctrl+Z to undo. F1 lists the keys for whichever is active.
 
 ## Terminal version
 

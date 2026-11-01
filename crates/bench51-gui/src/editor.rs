@@ -4,9 +4,12 @@
 use std::collections::{HashMap, HashSet};
 
 use bench51_core::syntax::tokens;
+use std::path::PathBuf;
+
 use eframe::egui::{
-    self, Align, Align2, Color32, CursorIcon, FontId, Id, Key, Layout, Modifiers, Rect, RichText,
-    Sense, Shape, Stroke, TextBuffer, TextFormat, Ui, Vec2,
+    self, Align, Align2, Color32, Context, CursorIcon, Event, EventFilter, FontId, Id, Key, Layout,
+    Modifiers, Rect, RichText, Sense, Shape, Stroke, StrokeKind, TextBuffer, TextFormat, Ui,
+    UiBuilder, Vec2, WidgetText,
     cache::{ComputerMut, FrameCache},
     pos2,
     text::{CCursor, CCursorRange, LayoutJob},
@@ -14,8 +17,9 @@ use eframe::egui::{
     vec2,
 };
 
-use crate::state::{Action, Document, Mode, State};
+use crate::state::{Action, Document, Keymap, Mode, State};
 use crate::theme::{self, ACCENT, BODY, DARK, LIGHT, WARNING, palette};
+use crate::vim::{self, VimKey};
 use crate::widgets::{self, PillKind};
 
 const MARGIN: Vec2 = vec2(10.0, 8.0);
@@ -29,7 +33,173 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     if st.find.open {
         find_bar(ui, st);
     }
-    code(ui, st);
+    if st.prefs.keymap == Keymap::Vim {
+        let full = ui.available_rect_before_wrap();
+        let h = 26.0;
+        let code_rect = Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - h));
+        let line_rect = Rect::from_min_max(pos2(full.min.x, full.max.y - h), full.max);
+        ui.scope_builder(UiBuilder::new().max_rect(code_rect), |ui| code(ui, st));
+        mode_line(ui, line_rect, st);
+        ui.advance_cursor_after_rect(full);
+    } else {
+        code(ui, st);
+    }
+}
+
+/// Id of a document's text editor widget.
+pub fn edit_id(doc_id: u64) -> Id {
+    Id::unique(("editor", doc_id))
+}
+
+/// Vim's mode, recording state, command line or message, and pending keys.
+fn mode_line(ui: &Ui, rect: Rect, st: &State) {
+    let p = palette(ui.ctx());
+    let v = &st.vim;
+    let painter = ui.painter();
+    painter.hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, p.border));
+    let label = |text: &str, color: Color32| {
+        WidgetText::from(p.label(text).color(color)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Small,
+        )
+    };
+    let cy = rect.center().y;
+    let mut x = rect.left() + 12.0;
+    let put = |g: std::sync::Arc<egui::Galley>, x: &mut f32, color: Color32| {
+        let w = g.size().x;
+        painter.galley(pos2(*x, cy - g.size().y / 2.0), g, color);
+        *x += w;
+    };
+    let color = if v.mode == vim::Mode::Normal {
+        p.text_secondary
+    } else {
+        p.text_display
+    };
+    put(label(v.mode_label(), color), &mut x, color);
+    x += 18.0;
+    if let Some(r) = v.recording() {
+        painter.circle_filled(pos2(x + 3.5, cy), 3.5, ACCENT);
+        x += 12.0;
+        put(label(&format!("rec @{r}"), ACCENT), &mut x, ACCENT);
+        x += 18.0;
+    }
+    let font = FontId::monospace(13.0);
+    if let Some((prompt, input)) = &v.cmdline {
+        let r = painter.text(
+            pos2(x, cy),
+            Align2::LEFT_CENTER,
+            format!("{prompt}{input}"),
+            font.clone(),
+            p.text_display,
+        );
+        let cw = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
+        painter.rect_filled(
+            Rect::from_center_size(pos2(r.right() + cw / 2.0, cy), vec2(cw, r.height())),
+            0.0,
+            p.text_display,
+        );
+    } else if let Some((msg, error)) = &v.message {
+        let color = if *error { ACCENT } else { p.text_secondary };
+        painter.text(pos2(x, cy), Align2::LEFT_CENTER, msg, font.clone(), color);
+    }
+    painter.text(
+        pos2(rect.right() - 12.0, cy),
+        Align2::RIGHT_CENTER,
+        v.pending_label(),
+        font,
+        p.text_display,
+    );
+}
+
+/// Where the view goes after Vim handled this frame's keys.
+enum VimScroll {
+    /// Just keep the cursor visible.
+    Cursor,
+    Align(vim::Align),
+    Lines(isize),
+}
+
+/// Keyboard input for the focused editor (Ctrl+Tab stays with the panes).
+fn is_keyboard(e: &Event) -> bool {
+    match e {
+        Event::Key { key, modifiers, .. } => !(modifiers.ctrl && *key == Key::Tab),
+        Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut | Event::Ime(_) => true,
+        _ => false,
+    }
+}
+
+/// A path typed in `:w` or `:e`, relative to the document's folder.
+fn resolve(doc: &Document, path: &str) -> PathBuf {
+    let p = PathBuf::from(path);
+    match doc.path.as_ref().and_then(|d| d.parent()) {
+        Some(dir) if p.is_relative() => dir.join(p),
+        _ => p,
+    }
+}
+
+/// Takes this frame's keys away from the TextEdit, feeds them to Vim and
+/// turns its effects into app actions.
+fn drive_vim(ctx: &Context, st: &mut State, debug: bool) -> Option<VimScroll> {
+    let events: Vec<Event> = ctx.input_mut(|i| {
+        let (keys, rest) = std::mem::take(&mut i.events)
+            .into_iter()
+            .partition(is_keyboard);
+        i.events = rest;
+        keys
+    });
+    let mut keys: Vec<VimKey> = events.iter().flat_map(vim::from_egui).collect();
+    if debug && st.vim.mode == vim::Mode::Insert {
+        keys.insert(0, VimKey::Esc);
+    }
+    if keys.is_empty() {
+        return None;
+    }
+    let n_docs = st.docs.len();
+    let State {
+        docs,
+        active,
+        vim,
+        actions,
+        vim_view,
+        ..
+    } = st;
+    let active = *active;
+    let doc = docs.get_mut(active)?;
+    let mut scroll = VimScroll::Cursor;
+    for k in keys {
+        let dirty = doc.dirty();
+        let mut cx = vim::Cx {
+            text: &mut doc.text,
+            cursor: &mut doc.cursor_char,
+            history: &mut doc.history,
+            readonly: debug,
+            dirty,
+            view: *vim_view,
+        };
+        for fx in vim.key(k, &mut cx) {
+            use vim::Effect;
+            match fx {
+                Effect::Clipboard(t) => ctx.copy_text(t),
+                Effect::Save => actions.push(Action::Save),
+                Effect::SaveAs(p) => actions.push(Action::SaveTo(resolve(doc, &p))),
+                Effect::Close { force: true } => actions.push(Action::ForceClose(active)),
+                Effect::Close { force: false } => actions.push(Action::Close(active)),
+                Effect::Quit { force: true } => actions.push(Action::ForceQuit),
+                Effect::Quit { force: false } => actions.push(Action::Quit),
+                Effect::Edit(p) => actions.push(Action::OpenPath(resolve(doc, &p))),
+                Effect::Make => actions.push(Action::Build),
+                Effect::NextDoc => actions.push(Action::Activate((active + 1) % n_docs)),
+                Effect::PrevDoc => actions.push(Action::Activate((active + n_docs - 1) % n_docs)),
+                Effect::Scroll(a) => scroll = VimScroll::Align(a),
+                Effect::ScrollLines(n) => scroll = VimScroll::Lines(n),
+            }
+        }
+    }
+    doc.cursor_char = doc.cursor_char.min(doc.text.chars().count());
+    doc.cursor = line_col(&doc.text, doc.cursor_char);
+    Some(scroll)
 }
 
 // ------------------------------------------------------------- tabs, find
@@ -169,6 +339,7 @@ fn find_bar(ui: &mut Ui, st: &mut State) {
     }
     if close {
         st.find.open = false;
+        st.focus_editor = true;
     }
 }
 
@@ -373,12 +544,34 @@ struct Marks {
 
 fn code(ui: &mut Ui, st: &mut State) {
     let debug = st.mode == Mode::Debug;
+    let vim_on = st.prefs.keymap == Keymap::Vim;
+    let ctx = ui.ctx().clone();
+    let Some(doc_id) = st.doc().map(|d| d.id) else {
+        return;
+    };
+    let edit_id = edit_id(doc_id);
+    if std::mem::take(&mut st.focus_editor) && !st.find.open {
+        ctx.memory_mut(|m| m.request_focus(edit_id));
+    }
+    let focused = ctx.memory(|m| m.has_focus(edit_id));
+    let vim_scroll = if vim_on && focused {
+        drive_vim(&ctx, st, debug)
+    } else {
+        None
+    };
     let query = if st.find.open {
         st.find.query.clone()
     } else {
         String::new()
     };
-    let Some(doc) = st.docs.get_mut(st.active) else {
+    let State {
+        docs,
+        active,
+        vim,
+        vim_view,
+        ..
+    } = st;
+    let Some(doc) = docs.get_mut(*active) else {
         return;
     };
     let p = palette(ui.ctx());
@@ -421,13 +614,8 @@ fn code(ui: &mut Ui, st: &mut State) {
         0.0
     };
     let gutter_w = bp_w + num_w + addr_w + 16.0;
-    let edit_id = Id::unique(("editor", doc.id));
-    let ctx = ui.ctx().clone();
 
-    if !debug
-        && ctx.memory(|m| m.has_focus(edit_id))
-        && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab))
-    {
+    if !vim_on && !debug && focused && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
         insert_tab(&ctx, edit_id, &mut doc.text);
     }
 
@@ -459,9 +647,30 @@ fn code(ui: &mut Ui, st: &mut State) {
     }
     let hit = doc.find_hit;
 
-    let matches = find_all(&doc.text, &query);
+    // Vim owns the cursor: show it, or the Visual selection, in the
+    // TextEdit, except while the mouse is dragging out a selection.
+    let block = vim_on && vim.block_cursor();
+    let dragging = ctx.dragged_id() == Some(edit_id);
+    if vim_on && !dragging {
+        let mut state = TextEditState::load(&ctx, edit_id).unwrap_or_default();
+        let range = match vim.selection(&doc.text, doc.cursor_char) {
+            Some((a, b)) => CCursorRange::two(CCursor::new(a), CCursor::new(b)),
+            None => CCursorRange::one(CCursor::new(doc.cursor_char)),
+        };
+        state.cursor.set_char_range(Some(range));
+        state.store(&ctx, edit_id);
+    }
+
+    let matches = if !query.is_empty() {
+        find_all(&doc.text, &query)
+    } else if vim_on {
+        vim.search_ranges(&doc.text)
+    } else {
+        Vec::new()
+    };
     let mut clicked_line = None;
     let mut cursor = None;
+    let mut mouse = None;
 
     egui::ScrollArea::both()
         .id_salt(("code", doc.id))
@@ -492,7 +701,10 @@ fn code(ui: &mut Ui, st: &mut State) {
                 } else {
                     &mut doc.text
                 };
-                let out = egui::TextEdit::multiline(buf)
+                if block {
+                    ui.visuals_mut().text_cursor.stroke = Stroke::NONE;
+                }
+                let mut edit = egui::TextEdit::multiline(buf)
                     .id(edit_id)
                     .font(font.clone())
                     .frame(egui::Frame::NONE)
@@ -500,9 +712,30 @@ fn code(ui: &mut Ui, st: &mut State) {
                     .desired_width(f32::INFINITY)
                     .desired_rows(1)
                     .lock_focus(true)
-                    .layouter(&mut layouter)
-                    .show(ui);
+                    .layouter(&mut layouter);
+                if vim_on {
+                    // Esc, Tab and the arrows belong to Vim, not to egui's
+                    // focus navigation.
+                    edit = edit.event_filter(EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    });
+                }
+                let out = edit.show(ui);
                 cursor = out.cursor_range.map(|r| r.primary.index.0);
+                let resp = &out.response.response;
+                if vim_on
+                    && (resp.clicked()
+                        || resp.dragged()
+                        || resp.drag_stopped()
+                        || resp.double_clicked())
+                {
+                    mouse = out
+                        .cursor_range
+                        .map(|r| (r.secondary.index.0, r.primary.index.0));
+                }
 
                 let galley = &out.galley;
                 let origin = out.galley_pos;
@@ -609,6 +842,53 @@ fn code(ui: &mut Ui, st: &mut State) {
                     gutter_resp.on_hover_text(msg);
                 }
 
+                // Vim: block cursor, visible lines, scrolling.
+                if vim_on {
+                    let n_chars = galley.text().chars().count();
+                    let ci = doc.cursor_char.min(n_chars);
+                    let at = galley
+                        .pos_from_cursor(CCursor::new(ci))
+                        .translate(origin.to_vec2());
+                    let cell = Rect::from_min_size(at.min, vec2(char_w, row_h));
+                    if block {
+                        let ch = galley.text().chars().nth(ci).filter(|c| !c.is_whitespace());
+                        if focused {
+                            painter.rect_filled(cell, 0.0, p.text_display);
+                            if let Some(ch) = ch {
+                                painter.text(cell.min, Align2::LEFT_TOP, ch, font.clone(), p.black);
+                            }
+                        } else {
+                            painter.rect_stroke(
+                                cell,
+                                0.0,
+                                Stroke::new(1.0, p.text_secondary),
+                                StrokeKind::Inside,
+                            );
+                        }
+                    }
+                    *vim_view = vim::View {
+                        top: first,
+                        rows: (clip.height() / row_h).floor().max(1.0) as usize,
+                    };
+                    match vim_scroll {
+                        Some(VimScroll::Cursor) => {
+                            ui.scroll_to_rect(cell.expand2(vec2(char_w * 4.0, row_h)), None)
+                        }
+                        Some(VimScroll::Align(a)) => ui.scroll_to_rect(
+                            row_rect(doc.cursor.0),
+                            Some(match a {
+                                vim::Align::Top => Align::Min,
+                                vim::Align::Center => Align::Center,
+                                vim::Align::Bottom => Align::Max,
+                            }),
+                        ),
+                        Some(VimScroll::Lines(n)) => {
+                            ui.scroll_with_delta(vec2(0.0, -(n as f32) * row_h));
+                        }
+                        None => {}
+                    }
+                }
+
                 if let Some(line) = follow {
                     ui.scroll_to_rect(row_rect(line), Some(Align::Center));
                 }
@@ -621,7 +901,12 @@ fn code(ui: &mut Ui, st: &mut State) {
             });
         });
 
-    if let Some(ci) = cursor {
+    if vim_on {
+        if let Some((tail, head)) = mouse {
+            vim.mouse(tail, head, &doc.text, &mut doc.cursor_char);
+            doc.cursor = line_col(&doc.text, doc.cursor_char);
+        }
+    } else if let Some(ci) = cursor {
         doc.cursor_char = ci;
         doc.cursor = line_col(&doc.text, ci);
     }
