@@ -6,12 +6,20 @@ use bench51_core::session::{MemSpace, Session};
 use serde::{Deserialize, Serialize};
 
 use crate::layout::Pane;
+use crate::vim::{self, Vim};
 
 /// Keil's two window layouts: building and debugging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Edit,
     Debug,
+}
+
+/// How the code editor takes keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+pub enum Keymap {
+    Vim,
+    Standard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
@@ -22,10 +30,11 @@ pub enum ThemePref {
 }
 
 /// Settings that survive restarts.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
     pub theme: ThemePref,
+    pub keymap: Keymap,
     pub recent: Vec<PathBuf>,
     pub speed: usize,
     pub clock_mhz: f64,
@@ -36,6 +45,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Self {
             theme: ThemePref::System,
+            keymap: Keymap::Vim,
             recent: Vec::new(),
             speed: 5,
             clock_mhz: 11.0592,
@@ -76,6 +86,8 @@ pub struct Document {
     pub find_hit: Option<(usize, usize)>,
     /// Scroll the editor and disassembly to the PC on the next frame.
     pub follow_pc: bool,
+    /// Vim undo history.
+    pub history: vim::History,
 }
 
 impl Document {
@@ -94,6 +106,7 @@ impl Document {
             select: None,
             find_hit: None,
             follow_pc: false,
+            history: vim::History::default(),
         }
     }
 
@@ -154,6 +167,8 @@ pub enum Action {
     OpenPath(PathBuf),
     Save,
     SaveAs,
+    /// Save the active document to this path (`:w file`).
+    SaveTo(PathBuf),
     /// Close a document, asking first if it has unsaved changes.
     Close(usize),
     /// Close without asking.
@@ -182,6 +197,7 @@ pub enum Action {
     ShowPane(Pane),
     ResetLayout,
     SetTheme(ThemePref),
+    SetKeymap(Keymap),
     Zoom(f32),
     ZoomReset,
     Find,
@@ -228,6 +244,11 @@ pub struct State {
     pub build_tab: BuildTab,
     pub serial_input: String,
     pub find: FindBar,
+    pub vim: Vim,
+    /// Lines visible in the editor last frame, for Vim's `H M L` and paging.
+    pub vim_view: vim::View,
+    /// Give the editor keyboard focus on the next frame.
+    pub focus_editor: bool,
 }
 
 impl State {
@@ -254,6 +275,9 @@ impl State {
                 query: String::new(),
                 focus: false,
             },
+            vim: Vim::default(),
+            vim_view: vim::View::default(),
+            focus_editor: false,
         }
     }
 
@@ -272,6 +296,8 @@ impl State {
         doc.session.speed = self.prefs.speed;
         self.docs.push(doc);
         self.active = self.docs.len() - 1;
+        self.vim.abandon();
+        self.focus_editor = true;
         self.docs.last_mut().unwrap()
     }
 

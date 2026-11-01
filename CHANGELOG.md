@@ -4,6 +4,27 @@ All notable changes to bench51. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Vim keybindings in the GUI editor, on by default: Normal, Insert, Visual
+  and Visual Line modes, motions with counts, operators with text objects,
+  registers, undo/redo, `.` repeat, macros, search with highlighting, and
+  `:w :q :wq :e :make`. A block cursor and a mode line show the state, and
+  `gd` jumps to a label's definition.
+- A Settings menu with Keybindings (Vim / Standard) and Theme, and a
+  `--keymap vim|standard` flag.
+
+### Changed
+
+- Theme moved from the View menu to Settings.
+
+### Fixed
+
+- `--theme`, `--keymap` and `--clock` no longer overwrite the saved
+  settings; they only apply to that run.
+
 ## [0.2.0] - 2026-11-01
 
 ### Added

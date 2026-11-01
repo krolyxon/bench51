@@ -6,7 +6,7 @@ use eframe::egui::{self, Align, Button, FontId, Layout, RichText, Stroke, Ui};
 
 use crate::icons::Icon;
 use crate::layout::Pane;
-use crate::state::{Action, Modal, Mode, State, ThemePref};
+use crate::state::{Action, Keymap, Modal, Mode, State, ThemePref};
 use crate::theme::{ACCENT, LABEL, LABEL_TRACKING, palette};
 use crate::widgets;
 
@@ -99,17 +99,6 @@ pub fn menu_bar(ui: &mut Ui, st: &mut State) {
                 }
             }
             ui.separator();
-            ui.menu_button(title(ui, "Theme"), |ui| {
-                for (t, name) in [
-                    (ThemePref::System, "System"),
-                    (ThemePref::Dark, "Dark"),
-                    (ThemePref::Light, "Light"),
-                ] {
-                    if check(ui, name, st.prefs.theme == t) {
-                        acts.push(Action::SetTheme(t));
-                    }
-                }
-            });
             if item(ui, "Zoom in", "Ctrl++") {
                 acts.push(Action::Zoom(0.1));
             }
@@ -184,6 +173,26 @@ pub fn menu_bar(ui: &mut Ui, st: &mut State) {
                     acts.push(Action::ShowPane(pane));
                 }
             }
+        });
+        ui.menu_button(title(ui, "Settings"), |ui| {
+            ui.menu_button(title(ui, "Keybindings"), |ui| {
+                for (k, name) in [(Keymap::Vim, "Vim"), (Keymap::Standard, "Standard")] {
+                    if check(ui, name, st.prefs.keymap == k) {
+                        acts.push(Action::SetKeymap(k));
+                    }
+                }
+            });
+            ui.menu_button(title(ui, "Theme"), |ui| {
+                for (t, name) in [
+                    (ThemePref::System, "System"),
+                    (ThemePref::Dark, "Dark"),
+                    (ThemePref::Light, "Light"),
+                ] {
+                    if check(ui, name, st.prefs.theme == t) {
+                        acts.push(Action::SetTheme(t));
+                    }
+                }
+            });
         });
         ui.menu_button(title(ui, "Help"), |ui| {
             if item(ui, "Keyboard shortcuts", "F1") {
@@ -374,6 +383,11 @@ pub fn status_bar(ui: &mut Ui, st: &State) {
             "edit"
         };
         ui.label(text(mode.into()).color(p.text_disabled));
+        let keys = match st.prefs.keymap {
+            Keymap::Vim => "vim",
+            Keymap::Standard => "std",
+        };
+        ui.label(text(keys.into()).color(p.text_disabled));
         // Running: a dot that blinks in hard 2 Hz steps.
         let (r, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
         let on = !live || (ui.input(|i| i.time) * 4.0) as i64 % 2 == 0;
