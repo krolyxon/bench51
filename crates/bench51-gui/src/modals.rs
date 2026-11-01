@@ -8,6 +8,30 @@ use crate::state::{Action, Modal, State};
 use crate::theme::{BODY, HERO, palette};
 use crate::widgets::{self, PillKind};
 
+/// Shown first while the editor uses Vim keys.
+const VIM: (&str, &[(&str, &str)]) = (
+    "Editor (Vim)",
+    &[
+        ("i a I A o O", "insert · append · open a line"),
+        ("Esc", "back to Normal mode"),
+        ("h j k l w b e", "move; counts work: 5j, 3w"),
+        ("0 ^ $ gg G :42", "line start / end, top, bottom, line 42"),
+        ("f t % { }", "find char, matching bracket, paragraph"),
+        ("d c y > < + motion", "delete · change · yank · indent"),
+        ("dd yy cc ciw ci\"", "lines, words, inside quotes"),
+        ("x p P J ~ r", "delete char, put, join, case, replace"),
+        ("u Ctrl-R .", "undo · redo · repeat"),
+        ("v V", "visual · visual line"),
+        ("/ ? n N * #", "search; :noh clears the highlight"),
+        ("gd", "go to the label's definition"),
+        ("qa … q  @a", "record and play a macro"),
+        (":w :q :wq :e :make", "write · close · open · build"),
+        ("gt gT", "next / previous file"),
+        ("Ctrl+V", "paste from the clipboard (y and d copy to it)"),
+        ("Settings → Keybindings", "switch to standard keys"),
+    ],
+);
+
 const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
     (
         "File",
@@ -160,7 +184,10 @@ pub fn show(ctx: &Context, st: &mut State) {
                     egui::ScrollArea::vertical()
                         .max_height(420.0)
                         .show(ui, |ui| {
-                            for (section, keys) in SHORTCUTS {
+                            let vim_on = st.prefs.keymap == crate::state::Keymap::Vim;
+                            let sections =
+                                vim_on.then_some(&VIM).into_iter().chain(SHORTCUTS.iter());
+                            for (section, keys) in sections {
                                 ui.label(p.label(section).color(p.text_disabled));
                                 ui.add_space(4.0);
                                 egui::Grid::new(section)

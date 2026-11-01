@@ -10,9 +10,11 @@ use eframe::egui::{
 use egui_tiles::Tree;
 
 use crate::layout::{self, Pane, PaneBehavior};
-use crate::state::{Action, BuildTab, LogKind, LogLine, Modal, Mode, Prefs, State, ThemePref};
+use crate::state::{
+    Action, BuildTab, Keymap, LogKind, LogLine, Modal, Mode, Prefs, State, ThemePref,
+};
 use crate::theme::{self, palette};
-use crate::{chrome, modals};
+use crate::{chrome, editor, modals};
 
 /// One simulation chunk, as in the TUI's frame loop.
 const TICK: f64 = 1.0 / 30.0;
@@ -43,6 +45,10 @@ pub struct GuiApp {
     /// The user confirmed quitting with unsaved changes.
     allow_close: bool,
     title: String,
+    /// Prefs as saved before the command line overrode them; those
+    /// overrides last only for this run.
+    saved_prefs: Prefs,
+    cli: Prefs,
 }
 
 fn theme_preference(t: ThemePref) -> ThemePreference {
@@ -76,6 +82,7 @@ impl GuiApp {
         files: Vec<PathBuf>,
         clock: Option<f64>,
         theme: Option<ThemePref>,
+        keymap: Option<Keymap>,
     ) -> Self {
         let ctx = &cc.egui_ctx;
         theme::install(ctx);
@@ -83,16 +90,23 @@ impl GuiApp {
             .storage
             .and_then(|s| eframe::get_value(s, "prefs"))
             .unwrap_or_default();
+        let saved_prefs = prefs.clone();
         if let Some(c) = clock {
             prefs.clock_mhz = c;
         }
         if let Some(t) = theme {
             prefs.theme = t;
         }
+        if let Some(k) = keymap {
+            prefs.keymap = k;
+        }
         prefs.speed = prefs.speed.min(bench51_core::session::SPEEDS.len() - 1);
         ctx.set_theme(theme_preference(prefs.theme));
         ctx.set_zoom_factor(prefs.zoom.clamp(0.5, 3.0));
+        let cli = prefs.clone();
         let mut app = Self {
+            saved_prefs,
+            cli,
             st: State::new(prefs),
             edit_tree: load_tree(cc, "edit_layout", layout::edit_tree),
             debug_tree: load_tree(cc, "debug_layout", layout::debug_tree),
@@ -125,6 +139,12 @@ impl GuiApp {
         let none = Modifiers::NONE;
         let running = self.st.running();
         let active = self.st.active;
+        // In Vim mode a focused editor keeps Ctrl+F (page down) for itself.
+        let vim_editor = self.st.prefs.keymap == Keymap::Vim
+            && self
+                .st
+                .doc()
+                .is_some_and(|d| ctx.memory(|m| m.has_focus(editor::edit_id(d.id))));
         // Most specific first: `consume_key` ignores extra Shift.
         let table: [(Modifiers, Key, Action); 25] = [
             (cmd_shift, Key::S, Action::SaveAs),
@@ -155,6 +175,9 @@ impl GuiApp {
         ];
         ctx.input_mut(|i| {
             for (mods, key, action) in table {
+                if vim_editor && action == Action::Find {
+                    continue;
+                }
                 if i.consume_key(mods, key) {
                     self.st.actions.push(action);
                 }
@@ -299,13 +322,16 @@ impl GuiApp {
         }
     }
 
-    fn save(&mut self, ask: bool) {
+    /// Saves the active document: to `to`, to its own path, or wherever the
+    /// user picks (always when `ask`).
+    fn save(&mut self, ask: bool, to: Option<PathBuf>) {
         let dir = self.start_dir();
         let Some(doc) = self.st.doc_mut() else {
             return;
         };
-        let path = match (&doc.path, ask) {
-            (Some(p), false) => Some(p.clone()),
+        let path = match (to, &doc.path, ask) {
+            (Some(p), _, _) => Some(p),
+            (None, Some(p), false) => Some(p.clone()),
             _ => {
                 let name = doc.name();
                 let stem = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
@@ -350,6 +376,8 @@ impl GuiApp {
         if self.st.active >= i && self.st.active > 0 {
             self.st.active -= 1;
         }
+        self.st.vim.abandon();
+        self.st.focus_editor = true;
         if self.st.docs.is_empty() {
             self.st.mode = Mode::Edit;
             self.st.active = 0;
@@ -368,7 +396,9 @@ impl GuiApp {
         if i < self.st.docs.len() && i != self.st.active {
             self.pause_active();
             self.st.active = i;
+            self.st.vim.abandon();
         }
+        self.st.focus_editor = true;
     }
 
     // ---- Build & debug ----
@@ -461,8 +491,9 @@ impl GuiApp {
             }
             Action::Open => self.open_dialog(),
             Action::OpenPath(p) => self.open_path(&p),
-            Action::Save => self.save(false),
-            Action::SaveAs => self.save(true),
+            Action::Save => self.save(false, None),
+            Action::SaveAs => self.save(true, None),
+            Action::SaveTo(p) => self.save(false, Some(p)),
             Action::Close(i) => {
                 if self.st.docs.get(i).is_some_and(|d| d.dirty()) {
                     self.st.modal = Some(Modal::ConfirmClose(i));
@@ -554,6 +585,11 @@ impl GuiApp {
                 self.st.prefs.theme = t;
                 ctx.set_theme(theme_preference(t));
             }
+            Action::SetKeymap(k) => {
+                self.st.prefs.keymap = k;
+                self.st.vim.abandon();
+                self.st.focus_editor = true;
+            }
             Action::Zoom(d) => ctx.set_zoom_factor((ctx.zoom_factor() + d).clamp(0.5, 3.0)),
             Action::ZoomReset => ctx.set_zoom_factor(1.0),
             Action::Find => {
@@ -643,7 +679,19 @@ impl eframe::App for GuiApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "prefs", &self.st.prefs);
+        // A setting still at its command-line value is saved as it was
+        // before; one changed in the app since is saved as changed.
+        let mut prefs = self.st.prefs.clone();
+        if prefs.theme == self.cli.theme {
+            prefs.theme = self.saved_prefs.theme;
+        }
+        if prefs.keymap == self.cli.keymap {
+            prefs.keymap = self.saved_prefs.keymap;
+        }
+        if prefs.clock_mhz == self.cli.clock_mhz {
+            prefs.clock_mhz = self.saved_prefs.clock_mhz;
+        }
+        eframe::set_value(storage, "prefs", &prefs);
         eframe::set_value(storage, "edit_layout", &self.edit_tree);
         eframe::set_value(storage, "debug_layout", &self.debug_tree);
     }

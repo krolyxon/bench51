@@ -10,6 +10,7 @@ mod modals;
 mod panes;
 mod state;
 mod theme;
+mod vim;
 mod widgets;
 
 use std::path::PathBuf;
@@ -32,6 +33,10 @@ struct Args {
     /// Colour theme, overriding the saved choice.
     #[arg(long, value_enum)]
     theme: Option<state::ThemePref>,
+
+    /// Editor keybindings, overriding the saved choice.
+    #[arg(long, value_enum)]
+    keymap: Option<state::Keymap>,
 }
 
 fn main() -> eframe::Result {
@@ -50,7 +55,11 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::GuiApp::new(
-                cc, args.files, args.clock, args.theme,
+                cc,
+                args.files,
+                args.clock,
+                args.theme,
+                args.keymap,
             )))
         }),
     )
