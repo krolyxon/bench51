@@ -382,9 +382,11 @@ impl Buf {
         let e = self.line_end(pos);
         let quotes: Vec<usize> = (s..e).filter(|&i| self.c[i] == q).collect();
         let pair = quotes
-            .chunks_exact(2)
-            .find(|p| pos <= p[1])
-            .map(|p| (p[0], p[1]))?;
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .find(|[_, close]| pos <= *close)
+            .map(|&[open, close]| (open, close))?;
         let (open, close) = pair;
         if around {
             let mut b = close + 1;
