@@ -4,7 +4,7 @@ All notable changes to bench51. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-01
 
 ### Added
 
@@ -65,4 +65,5 @@ All notable changes to bench51. The format follows
 - Headless assembly with `bench51 --assemble`.
 - Opening Intel HEX files as disassembled, re-assemblable source.
 
+[0.3.0]: https://github.com/krolyxon/bench51/releases/tag/v0.3.0
 [0.2.0]: https://github.com/krolyxon/bench51/releases/tag/v0.2.0

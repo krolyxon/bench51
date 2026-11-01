@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/bench51-core", "crates/bench51-tui", "crates/bench51-gui"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [workspace.lints.rust]
