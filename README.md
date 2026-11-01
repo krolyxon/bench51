@@ -120,7 +120,7 @@ Prebuilt binaries cover Linux (x86_64, aarch64), Windows (x86_64) and macOS
 
 ```bash
 cargo install --locked --git https://github.com/krolyxon/bench51 bench51-gui   # the desktop app
-cargo install --locked --git https://github.com/krolyxon/bench51 bench51       # the terminal app
+cargo install --locked --git https://github.com/krolyxon/bench51 bench51-tui   # the terminal app (bench51)
 ```
 
 ## Usage
@@ -288,7 +288,7 @@ Letter shortcuts work too, for terminals that swallow function keys:
 
 ```bash
 cargo run --release -p bench51-gui     # the desktop app
-cargo run --release -p bench51         # the terminal app
+cargo run --release -p bench51-tui     # the terminal app
 cargo test --workspace                 # assembler, CPU, peripheral, session and example-program tests
 cargo clippy --workspace --all-targets
 ```
@@ -305,12 +305,12 @@ every target. It publishes the archives and `SHA256SUMS` with that
 changelog section as the release notes, then installs the result with the
 one-liners on Linux, macOS and Windows.
 
-Code layout:
+Code layout, one crate per part under `crates/`:
 
-- `crates/bench51-gui/` is the `bench51-gui` desktop app (egui).
-- `src/` is the `bench51` terminal app (ratatui), including headless
-  assembly.
-- `crates/bench51-core/`, shared by both: `isa.rs` (opcode table), `asm/`
+- `bench51-gui/` builds the `bench51-gui` desktop app (egui).
+- `bench51-tui/` builds the `bench51` terminal app (ratatui), including
+  headless assembly.
+- `bench51-core/`, shared by both: `isa.rs` (opcode table), `asm/`
   (assembler, listing, Intel HEX), `sim/` (CPU, peripherals, disassembler),
   `session.rs` (build, run, step and breakpoints), `syntax.rs`
   (highlighting tokens), `files.rs` (HEX loading)

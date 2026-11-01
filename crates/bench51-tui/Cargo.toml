@@ -1,0 +1,18 @@
+[package]
+name = "bench51-tui"
+version.workspace = true
+edition.workspace = true
+description = "A TUI Intel 8051 assembler, simulator and debugger"
+
+[[bin]]
+name = "bench51"
+path = "src/main.rs"
+
+[dependencies]
+bench51-core.workspace = true
+clap.workspace = true
+ratatui = "0.30"
+ratatui-textarea = "0.9"
+
+[lints]
+workspace = true

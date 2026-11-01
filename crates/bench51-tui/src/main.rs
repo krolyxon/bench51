@@ -8,7 +8,7 @@ use clap::Parser;
 
 /// Intel 8051 assembler, simulator and TUI debugger.
 #[derive(Parser, Debug)]
-#[command(version, about)]
+#[command(name = "bench51", version, about)]
 struct Args {
     /// Assembly source (.asm) or Intel HEX (.hex) file to open.
     file: Option<PathBuf>,
