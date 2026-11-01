@@ -65,7 +65,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p bench51 -p bench51-gui
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bench51-tui -p bench51-gui
 
       - name: Package
         shell: bash

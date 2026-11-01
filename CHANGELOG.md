@@ -19,6 +19,9 @@ All notable changes to bench51. The format follows
 ### Changed
 
 - Theme moved from the View menu to Settings.
+- The terminal app moved from `src/` to `crates/bench51-tui` (package
+  `bench51-tui`, binary still `bench51`); the repository root is now a
+  plain workspace. From source: `cargo install --path crates/bench51-tui`.
 
 ### Fixed
 
